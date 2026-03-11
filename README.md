@@ -41,6 +41,7 @@ Agents stay effective through **well-maintained instructions and skills** — th
 | README | What's Inside |
 |--------|---------------|
 | **[Second Brain](Second%20Brain/README.md)** | Your notes — structure, conventions, customization |
+| **[Operations Docs](Second%20Brain/Operations/Docs/README.md)** | Setup guides for repo init and AI development |
 | **[Agents](.github/agents/README.md)** | Agent personalities and how to create your own |
 | **[Skills](.github/skills/README.md)** | Domain knowledge the agents reference |
 | **[Instructions](.github/instructions/README.md)** | Directory-scoped rules |
@@ -65,6 +66,9 @@ Agents stay effective through **well-maintained instructions and skills** — th
 ### Second Brain
 
 - [Operations](Second%20Brain/Operations/README.md)
+- [Operations Docs](Second%20Brain/Operations/Docs/README.md)
+- [Repo Init Docs](Second%20Brain/Operations/Docs/repo-init/README.md)
+- [AI Development Docs](Second%20Brain/Operations/Docs/ai-development/README.md)
 - [Periodic Notes](Second%20Brain/Operations/Periodic%20Notes/README.md)
 - [Daily Notes](Second%20Brain/Operations/Periodic%20Notes/Daily/README.md)
 - [Weekly Notes](Second%20Brain/Operations/Periodic%20Notes/Weekly/README.md)
@@ -81,8 +85,26 @@ Agents stay effective through **well-maintained instructions and skills** — th
 
 1. **Fork & clone** this repo
 2. **Open in Obsidian** — This repo IS your vault
-3. **Configure MCP** — Create `.vscode/mcp.json` with your credentials
+3. **Configure MCP locally** — Copy `.vscode/mcp.json.example` to `.vscode/mcp.json` and add your own credentials
 4. **Open VS Code** → Copilot Chat → Select agent → Start working
+
+Detailed guides:
+
+- **Repo setup:** [Second Brain/Operations/Docs/repo-init/README.md](Second%20Brain/Operations/Docs/repo-init/README.md)
+- **AI customization:** [Second Brain/Operations/Docs/ai-development/README.md](Second%20Brain/Operations/Docs/ai-development/README.md)
+
+### Local MCP Setup
+
+- `.vscode/mcp.json` is for your local machine only and is ignored by git.
+- `.vscode/mcp.json.example` is the safe template you can commit and share.
+- If you already created `.vscode/mcp.json`, keep it locally and do not commit it.
+- If the file was ever tracked by git, untrack it without deleting your local copy:
+
+```powershell
+git rm --cached .vscode/mcp.json
+```
+
+- Then keep your personal secrets only in `.vscode/mcp.json` on your machine.
 
 ## Structure
 
