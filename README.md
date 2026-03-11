@@ -4,167 +4,169 @@
   <img src=".github/assets/jointhubs.png" alt="Jointhubs" width="450">
 </p>
 
-> Multi-agent VS Code Copilot system for Obsidian + Google Workspace
+> **Your AI-powered Second Brain.** A multi-agent VS Code Copilot system built on Obsidian.
 
-**Fork this repo and make it yours.** Your brain works differently — so should your AI assistant.
+Fork it. Personalize it. Let AI agents that actually *know you* handle the grind: planning your week, reviewing your code, journaling your progress, managing your projects.
+
+**Your brain works differently. Your AI assistant should too.**
+
+---
+
+## Why Jointhubs OS?
+
+Most AI tools give you a blank chat window and wish you luck. Jointhubs OS gives you a **team of specialized agents** that read your notes, understand your projects, and remember what happened yesterday.
+
+This is a **starter kit**, not a finished product. The agents, skills, prompts, and vault structure are all designed to be changed. Delete what you don't need, add what you do, reshape it around how *you* think and work.
+
+- **7 agents**, each with a distinct personality and purpose
+- **8 skills** with domain knowledge agents load when needed
+- **13 prompts** for daily kickoff, commits, reviews, and more
+- **Directory-scoped instructions** that apply automatically based on what you're working on
+- **MCP integrations** to connect Google Workspace, web search, and other tools
+- **100% yours**: fork, customize, extend. Your notes stay local, your AI stays personal
+
+---
 
 ## How It Works
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      VS Code Copilot                        │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────┐  │
-│  │Tech Lead│ │ Planner │ │ Journal │ │ Review  │ │  ...  │  │
-│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └───┬───┘  │
-│       └───────────┴───────────┴───────────┴─────────┘       │
-│                           │                                  │
-│              reads/writes │ daily logs                       │
-│                           ▼                                  │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                   Second Brain/                      │   │
-│  │   Operations/ ─── Personal/ ─── Projects/            │   │
-│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌──────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐        │
+│  │Tech Lead │ │ Planner │ │ Journal │ │ Designer │  ...    │
+│  └────┬─────┘ └────┬────┘ └────┬────┘ └────┬─────┘        │
+│       └─────────────┴──────────┴────────────┘              │
+│                         │                                   │
+│            reads/writes │ your notes                        │
+│                         ▼                                   │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │                  Second Brain/                       │  │
+│  │    Operations/ ── Personal/ ── Projects/             │  │
+│  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
-         │
-         │ MCP
-         ▼
-  ┌──────────────────────────────┐
-  │  External Services (MCP)     │
-  │  Google Workspace, etc.      │
-  └──────────────────────────────┘
+          │
+          │ MCP
+          ▼
+   ┌─────────────────────────────┐
+   │   External Services (MCP)   │
+   │   Google Workspace, etc.    │
+   └─────────────────────────────┘
 ```
 
-Agents stay effective through **well-maintained instructions and skills** — they guide navigation, workflows, and context sharing across sessions.
+Agents maintain continuity through **daily logs**. They read yesterday's notes, pick up context, and keep working where you left off.
 
-## Documentation
-
-| README | What's Inside |
-|--------|---------------|
-| **[Second Brain](Second%20Brain/README.md)** | Your notes — structure, conventions, customization |
-| **[Operations Docs](Second%20Brain/Operations/Docs/README.md)** | Setup guides for repo init and AI development |
-| **[Agents](.github/agents/README.md)** | Agent personalities and how to create your own |
-| **[Skills](.github/skills/README.md)** | Domain knowledge the agents reference |
-| **[Instructions](.github/instructions/README.md)** | Directory-scoped rules |
-
-## Mechanics
-
-- **Notes live in Second Brain** — agents read/write these files for context.
-- **Skills define knowledge** — `.github/skills/*/SKILL.md` teaches agents how to work.
-- **Instructions enforce rules** — `.github/instructions/` scopes behavior to directories.
-- **MCP connects tools** — agents can call MCP servers (e.g., Google Workspace) to act on calendars, tasks, and email.
-- **Change your structure?** Update skills + instructions so agents can still find your notes.
-
-## Readme Index
-
-### Core
-
-- [Second Brain](Second%20Brain/README.md)
-- [Agents](.github/agents/README.md)
-- [Skills](.github/skills/README.md)
-- [Instructions](.github/instructions/README.md)
-
-### Second Brain
-
-- [Operations](Second%20Brain/Operations/README.md)
-- [Operations Docs](Second%20Brain/Operations/Docs/README.md)
-- [Repo Init Docs](Second%20Brain/Operations/Docs/repo-init/README.md)
-- [AI Development Docs](Second%20Brain/Operations/Docs/ai-development/README.md)
-- [Periodic Notes](Second%20Brain/Operations/Periodic%20Notes/README.md)
-- [Daily Notes](Second%20Brain/Operations/Periodic%20Notes/Daily/README.md)
-- [Weekly Notes](Second%20Brain/Operations/Periodic%20Notes/Weekly/README.md)
-- [Meetings](Second%20Brain/Operations/Meetings/README.md)
-- [Personal](Second%20Brain/Personal/README.md)
-- [Health](Second%20Brain/Personal/Health/README.md)
-- [Finances](Second%20Brain/Personal/Finances/README.md)
-- [Events](Second%20Brain/Personal/Events/README.md)
-- [Classes](Second%20Brain/Personal/Classes/README.md)
-- [Projects](Second%20Brain/Projects/README.md)
-- [Jointhubs OS Upgrade](Second%20Brain/Projects/jointhubs-os-upgrade/README.md)
+---
 
 ## Quick Start
 
-1. **Fork & clone** this repo
-2. **Open in Obsidian** — This repo IS your vault
-3. **Configure MCP locally** — Copy `.vscode/mcp.json.example` to `.vscode/mcp.json` and add your own credentials
-4. **Open VS Code** → Copilot Chat → Select agent → Start working
+```bash
+# 1. Fork & clone
+git clone https://github.com/YOUR_USERNAME/jointhubs-os.git
+cd jointhubs-os
 
-Detailed guides:
+# 2. Open as an Obsidian vault (the repo IS your vault)
 
-- **Repo setup:** [Second Brain/Operations/Docs/repo-init/README.md](Second%20Brain/Operations/Docs/repo-init/README.md)
-- **AI customization:** [Second Brain/Operations/Docs/ai-development/README.md](Second%20Brain/Operations/Docs/ai-development/README.md)
+# 3. Configure MCP (optional)
+cp .vscode/mcp.json.example .vscode/mcp.json
+# Add your credentials to .vscode/mcp.json
 
-### Local MCP Setup
-
-- `.vscode/mcp.json` is for your local machine only and is ignored by git.
-- `.vscode/mcp.json.example` is the safe template you can commit and share.
-- If you already created `.vscode/mcp.json`, keep it locally and do not commit it.
-- If the file was ever tracked by git, untrack it without deleting your local copy:
-
-```powershell
-git rm --cached .vscode/mcp.json
+# 4. Open in VS Code → Copilot Chat → Pick an agent → Go
 ```
 
-- Then keep your personal secrets only in `.vscode/mcp.json` on your machine.
+> **Detailed setup:** [Repo Init Guide](Second%20Brain/Operations/Docs/repo-init/README.md) · [AI Development Guide](Second%20Brain/Operations/Docs/ai-development/README.md)
 
-## Structure
+---
+
+## Agents
+
+Specialized personas you select in Copilot Chat. Each brings a different mindset to your work.
+
+| Agent | Purpose |
+|-------|---------|
+| **Tech Lead** | Code, architecture, system design, debugging |
+| **Planner** | Daily/weekly planning, prioritization, focus sessions |
+| **Journal** | Reflection, pattern recognition, knowledge synthesis |
+| **Designer** | UX review, accessibility, interface critique |
+| **Debug** | Systematic bug investigation and resolution |
+| **Investor** | Stock research, due diligence, scenario modeling |
+| **Travel Planner** | Trip planning, accommodation research, itineraries |
+
+Create your own: copy `_TEMPLATE.agent.md` → customize → done.
+
+## Skills
+
+Domain knowledge that agents load automatically when relevant.
+
+| Skill | What It Teaches |
+|-------|-----------------|
+| **daily-log** | Daily note format, session continuity |
+| **weekly-review** | Weekly reflection and planning process |
+| **obsidian-vault** | Vault structure, naming, frontmatter, tags |
+| **project-context** | Project lifecycle with `CONTEXT.md` pattern |
+| **strategic-thinking** | Decision frameworks, trade-offs, scenarios |
+| **design-review** | Design checklists, accessibility standards |
+| **travel-research** | Accommodation, flights, travel deal strategies |
+| **agentic-engineering** | Building agents, skills, and prompts |
+
+## Prompts
+
+One-command workflows. Type `/prompt-name` in Copilot Chat.
+
+| Prompt | What It Does |
+|--------|--------------|
+| `/daily-kickoff` | Start your day with context and priorities |
+| `/session-end` | Wrap up, log progress, set tomorrow's focus |
+| `/weekly-review` | Weekly reflection and planning |
+| `/commit` | Smart commit message generation |
+| `/deep-work` | Set up a focused work session |
+| `/design-review` | Run a UX/accessibility audit |
+| `/project-status` | Get project status from `CONTEXT.md` |
+| `/quick-capture` | Fast note capture |
+| `/new-project` | Scaffold a new project |
+| `/context-update` | Update project context |
+| `/breakdown` | Break a task into steps |
+| `/beast-mode` | Maximum intensity mode |
+| `/new-scraper` | Generate a web scraper |
+
+---
+
+## Project Structure
 
 ```
 jointhubs-os/
 ├── .github/
-│   ├── agents/              ← Agent personalities
-│   ├── skills/              ← Domain knowledge  
+│   ├── agents/              ← Agent personalities (.agent.md)
+│   ├── skills/              ← Domain knowledge (SKILL.md per folder)
+│   ├── prompts/             ← One-command workflows (.prompt.md)
 │   ├── instructions/        ← Directory-scoped rules
 │   └── copilot-instructions.md
-├── Second Brain/            ← YOUR NOTES
-│   ├── Operations/          ← Daily logs, meetings
-│   ├── Personal/            ← Life tracking
-│   └── Projects/            ← Active work
+├── Second Brain/            ← YOUR NOTES (Obsidian vault)
+│   ├── Operations/          ← Daily logs, meetings, docs
+│   ├── Personal/            ← Health, finances, events
+│   └── Projects/            ← Active work with CONTEXT.md
 └── README.md
 ```
 
-## The Three Layers
+### What Goes Where
 
-### 1. Agents — Who
+| Layer | Path | Purpose |
+|-------|------|---------|
+| **Agents** | `.github/agents/*.agent.md` | Who does the work: personalities and tool access |
+| **Skills** | `.github/skills/*/SKILL.md` | What they know: domain knowledge loaded on demand |
+| **Prompts** | `.github/prompts/*.prompt.md` | Repeatable workflows triggered with `/name` |
+| **Instructions** | `.github/instructions/*.instructions.md` | Rules auto-applied by file path |
+| **Notes** | `Second Brain/` | Your notes, read and written by agents for context |
 
-Personalities that handle different types of work.
+---
 
-```
-.github/agents/*.agent.md
-```
+## Customization
 
-| Agent | Purpose |
-|-------|---------|
-| **Tech Lead** | Code, architecture, debugging |
-| **Designer** | UX review, interface critique |
-| **Planner** | Daily/weekly planning |
-| **Journal** | Reflection, patterns |
-| **Review** | Weekly synthesis |
-| **DeepWork** | Focus sessions |
-| **Inbox** | Email triage |
+This is **your** system. Customize everything.
 
-### 2. Skills — What They Know
+### The Agent Contract
 
-Domain knowledge agents reference when needed.
-
-```
-.github/skills/*/SKILL.md
-```
-
-Skills are **folders** with a `SKILL.md` file and optional resources (templates, examples).
-
-### 3. Instructions — Rules By Context
-
-Directory-scoped rules that apply automatically.
-
-```
-.github/instructions/*.instructions.md
-```
-
-Example: `projects.instructions.md` applies when working in `Second Brain/Projects/`.
-
-## Customization Contract
-
-**When you change your notes, update the agents.**
+When you change your notes, update the agents so they can still find things:
 
 | You Changed | Update This |
 |-------------|-------------|
@@ -173,12 +175,39 @@ Example: `projects.instructions.md` applies when working in `Second Brain/Projec
 | Project structure | `.github/skills/project-context/SKILL.md` |
 | New conventions | `.github/instructions/*.instructions.md` |
 
-See [Second Brain README](Second%20Brain/README.md) for more on note strategies.
+### Local / Private Configuration
 
-## License
+Every customization layer has a `local/` subfolder for private files that won't be committed:
 
-MIT — See [LICENSE](LICENSE)
+- `.github/agents/local/` - Private agents
+- `.github/skills/local/` - Private skills
+- `.github/prompts/local/` - Private prompts
+- `.github/instructions/local/` - Private instructions
+- `.vscode/mcp.json` - Your MCP credentials (gitignored)
 
 ---
 
-**Join your hubs. Ship your work.** 🧠
+## Documentation
+
+| README | What's Inside |
+|--------|---------------|
+| [Second Brain](Second%20Brain/README.md) | Note structure, conventions, customization strategies |
+| [Agents](.github/agents/README.md) | Agent catalog and how to create your own |
+| [Skills](.github/skills/README.md) | Skill catalog and authoring guide |
+| [Prompts](.github/prompts/README.md) | Available prompts and how to create them |
+| [Instructions](.github/instructions/README.md) | Directory-scoped rules and patterns |
+| [Operations Docs](Second%20Brain/Operations/Docs/README.md) | Setup guides and AI development reference |
+
+---
+
+## Contributing
+
+Jointhubs OS is open source under the MIT license. We welcome new agents, skills, and prompts. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+MIT. See [LICENSE](LICENSE)
+
+---
+
+**Your brain, your agents, your rules.** Fork it and make it yours. 🧠
