@@ -1,5 +1,7 @@
 # Skills Directory
 
+> ← [Back to Jointhubs OS](../../README.md)
+
 Agent Skills are folders of instructions and resources that AI agents load on-demand.
 
 ## Shared vs Local
@@ -103,3 +105,15 @@ Templates live in the skill folder. If you use Obsidian Templater (or another sy
 
 - [Agent Skills Spec](https://agentskills.io/)
 - [VS Code Skills Docs](https://code.visualstudio.com/docs/copilot/customization/agent-skills)
+
+---
+
+## Navigation
+
+| Where | What |
+|-------|------|
+| ← [Jointhubs OS](../../README.md) | System overview |
+| → [Agents](../agents/README.md) | Who uses these skills |
+| → [Instructions](../instructions/README.md) | Rules vs knowledge |
+| → [Prompts](../prompts/README.md) | One-command workflows |
+| → [Second Brain](../../Second%20Brain/README.md) | The notes skills describe |

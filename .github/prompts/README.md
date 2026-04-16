@@ -1,5 +1,7 @@
 # Prompts Directory
 
+> ← [Back to Jointhubs OS](../../README.md)
+
 Prompt files are reusable, on-demand prompts for common development workflows.
 
 ## Shared vs Local
@@ -82,3 +84,14 @@ Current local examples:
 5. Update this README only for shared prompts
 
 See [Maintenance Guide](../AGENT_MAINTENANCE.md) for details.
+
+---
+
+## Navigation
+
+| Where | What |
+|-------|------|
+| ← [Jointhubs OS](../../README.md) | System overview |
+| → [Agents](../agents/README.md) | Who runs these prompts |
+| → [Skills](../skills/README.md) | Domain knowledge |
+| → [Instructions](../instructions/README.md) | Directory-scoped rules |

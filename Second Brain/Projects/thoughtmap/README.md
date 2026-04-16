@@ -1,5 +1,7 @@
 # ThoughtMap
 
+> ← [Back to Projects](../README.md) · [Jointhubs OS](../../../README.md)
+
 Integrated vector storage for personal thought data — daily logs, voice dictation, and working notes — with topic clustering and interactive 2D visualization.
 
 ## What It Does
@@ -160,3 +162,15 @@ python -m thoughtmap static  # Serve existing UI only
 
 - [[CONTEXT.md]] — project state and decisions
 - Output follows the same convention as [graphify-out](../graphify-out/)
+
+---
+
+## Navigation
+
+| Where | What |
+|-------|------|
+| ← [Projects](../README.md) | All projects |
+| ← [Second Brain](../../README.md) | Knowledge layer overview |
+| → [Operations](../../Operations/README.md) | Where thoughtmap-out/ lands |
+| → [Automation](../../../.github/automation/README.md) | Nightly scheduled runs |
+| → [ThoughtMap Skill](../../../.github/skills/thoughtmap/SKILL.md) | Agent knowledge for ThoughtMap |

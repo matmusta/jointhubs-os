@@ -1,5 +1,7 @@
 # Instructions Directory
 
+> ← [Back to Jointhubs OS](../../README.md)
+
 This directory contains context-specific instructions that apply to particular directories or situations.
 
 ## What are Instructions?
@@ -93,3 +95,14 @@ applyTo: "Path/Pattern/**"
 
 [How to commit changes in this context]
 ```
+
+---
+
+## Navigation
+
+| Where | What |
+|-------|------|
+| ← [Jointhubs OS](../../README.md) | System overview |
+| → [Agents](../agents/README.md) | Agent personalities |
+| → [Skills](../skills/README.md) | Knowledge vs rules |
+| → [Prompts](../prompts/README.md) | One-command workflows |
