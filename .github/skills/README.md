@@ -16,10 +16,17 @@ Agent Skills are folders of instructions and resources that AI agents load on-de
 | [weekly-review](weekly-review/) | Weekly reflection process | "weekly review", "Friday review" |
 | [project-context](project-context/) | Project state management | "CONTEXT.md", "project status" |
 | [obsidian-vault](obsidian-vault/) | Vault conventions | "file naming", "frontmatter" |
+| [obsidian-markdown](obsidian-markdown/) | Obsidian Flavored Markdown syntax | "wikilinks", "callouts", "embeds", "OFM" |
+| [obsidian-bases](obsidian-bases/) | Obsidian Bases (.base files) | "bases", "table view", "card view", "filter notes" |
+| [json-canvas](json-canvas/) | JSON Canvas (.canvas files) | "canvas", "mind map", "flowchart", "visual canvas" |
+| [obsidian-cli](obsidian-cli/) | Obsidian CLI vault operations | "obsidian cli", "vault from terminal", "plugin dev" |
+| [defuddle](defuddle/) | Extract clean markdown from web pages | "parse url", "read article", "scrape page" |
+| [firecrawl](firecrawl/) | Managed markdown-first crawling and site mapping | "firecrawl", "crawl docs", "scrape website to markdown" |
 | [design-review](design-review/) | Product and UX critique | "review design", "check accessibility" |
 | [strategic-thinking](strategic-thinking/) | Decision frameworks and trade-offs | "options", "decision", "trade-offs" |
 | [agentic-engineering](agentic-engineering/) | Building and evolving the agent system | "custom agents", "skills", "instructions" |
 | [travel-research](travel-research/) | Travel planning and accommodation research | "find hotel", "compare flights" |
+| [thoughtmap](thoughtmap/) | ThoughtMap pipeline, MCP vector search, cluster analysis | "search thoughts", "clusters", "knowledge base", "vector search" |
 
 ## Domain Skills In This Repo
 
@@ -27,10 +34,17 @@ These are useful but more specialized than the vault conventions and session-tra
 
 | Skill | Purpose |
 |-------|---------|
+| [obsidian-markdown](obsidian-markdown/) | Obsidian Flavored Markdown syntax reference |
+| [obsidian-bases](obsidian-bases/) | Obsidian Bases (.base files) with views and formulas |
+| [json-canvas](json-canvas/) | JSON Canvas (.canvas files) for visual thinking |
+| [obsidian-cli](obsidian-cli/) | Obsidian CLI for vault operations and plugin dev |
+| [defuddle](defuddle/) | Clean web content extraction via CLI |
+| [firecrawl](firecrawl/) | Managed markdown-first scraping, crawling, and site mapping |
 | [agentic-engineering](agentic-engineering/) | Building and evolving the agent system |
 | [design-review](design-review/) | Product and UX critique |
 | [strategic-thinking](strategic-thinking/) | Decision frameworks and trade-offs |
 | [travel-research](travel-research/) | Travel planning and accommodation research |
+| [thoughtmap](thoughtmap/) | ThoughtMap pipeline, MCP vector search, cluster analysis |
 
 ## How Skills Work
 

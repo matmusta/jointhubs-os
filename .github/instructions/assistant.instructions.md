@@ -36,6 +36,18 @@ The vault is organized into three main areas inside `Second Brain/`:
 | **Weekly Notes** | `Second Brain/Operations/Periodic Notes/Weekly/YYYY-Www.md` |
 | **Meetings** | `Second Brain/Operations/Meetings/` |
 | **Projects** | `Second Brain/Projects/{name}/` |
+| **ThoughtMap Output** | `Second Brain/Operations/thoughtmap-out/` |
+
+### ThoughtMap Output (quick reference)
+
+Auto-generated semantic map of the knowledge base. Key files:
+- `REPORT.md` — overview: god nodes, entities, clusters, bridges
+- `topics/` — per-cluster notes with summaries, related topics, representative fragments
+- `entities/` — per-entity notes (person, org, project, tool, location) with summaries, boundaries, area context
+- `entities.json`, `clusters.json`, `condensed.json` — machine-readable data
+- `thoughtmap.html` — interactive 2D visualization (open in browser)
+
+See `.github/instructions/thoughtmap-out.instructions.md` for full navigation guide.
 
 ### Date Patterns
 
@@ -202,12 +214,44 @@ Read today's daily note first, then scan 2-3 previous days.
 ### For Patterns
 Use `semantic_search` with queries like "project blockers" or "energy levels".
 
+### For Deep Context (MCP Knowledge Tools)
+Use ThoughtMap MCP tools for semantic search across all knowledge sources:
+- `search_thoughts("query")` — find relevant notes, transcripts, project docs by meaning
+- `list_clusters()` — see all topic groups the user thinks about
+- `get_cluster(id)` — drill into a specific topic cluster
+- `cluster_distances(id)` — find related or distant topics
+- `text_distance(a, b)` — measure semantic similarity between two texts
+
+ThoughtMap may index three local source families depending on configuration:
+- repo-local `Second Brain/` markdown
+- an external Obsidian Vault path (optional)
+- Wispr Flow local SQLite history (optional)
+
+Treat the external vault and Wispr Flow as optional local integrations: present in some setups, absent in others.
+
+Use graphify output for project-specific structural context:
+- Read `graphify-out/GRAPH_REPORT.md` for entity-relationship maps within a project
+- See `.github/instructions/graphify.instructions.md` for full workflow
+
+**When to use which:**
+- **ThoughtMap MCP** → broad, cross-project, meaning-based ("what do I know about X?")
+- **Graphify** → structural, within one project ("how do parts of this project relate?")
+- **grep_search** → exact text, tags, task markers
+- **file_search** → known file names or patterns
+
 ---
 
 ## Skills Library
 
 Load these for detailed workflows:
+- `.github/skills/thoughtmap/` — ThoughtMap pipeline, output interpretation, and MCP vector search tools
 - `.github/skills/obsidian-vault/` — Full vault navigation and conventions
+- `.github/skills/obsidian-markdown/` — Wikilinks, embeds, callouts, and Obsidian Markdown features
+- `.github/skills/obsidian-bases/` — `.base` files with views, filters, and formulas
+- `.github/skills/json-canvas/` — `.canvas` files with nodes, groups, and edges
+- `.github/skills/obsidian-cli/` — Obsidian CLI commands and plugin/theme development workflows
+- `.github/skills/defuddle/` — Clean markdown extraction from web pages
+- `.github/skills/firecrawl/` — If the user gives a concrete URL, prefer Firecrawl. Use `map` for links and `crawl`/`extract` for content.
 - `.github/skills/daily-log/` — Daily log format and procedures
 - `.github/skills/weekly-review/` — Weekly review process
 - `.github/skills/project-context/` — Project lifecycle and CONTEXT.md

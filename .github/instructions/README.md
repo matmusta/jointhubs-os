@@ -21,6 +21,8 @@ Unlike agents (personality) and skills (knowledge), instructions are **rules**.
 | Instruction | Scope | Purpose |
 |-------------|-------|---------|
 | **[assistant](assistant.instructions.md)** | Global | Base Jointhubs instructions, vault structure |
+| **[graphify](graphify.instructions.md)** | Global when `graphify-out/` exists | Use graph outputs as a fast context map before deep reading |
+| **[jointhubs](jointhubs.instructions.md)** | `Second Brain/Projects/jointhubs/**` | Prefer strategic vs implementation graphs appropriately inside Jointhubs |
 | **[projects](projects.instructions.md)** | `Second Brain/Projects/**` | Working in project directories |
 | **[operations](operations.instructions.md)** | `Second Brain/Operations/**` | Operational tasks, daily notes |
 | **[health](health.instructions.md)** | `Second Brain/Personal/Health/**` | Health tracking |
