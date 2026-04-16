@@ -601,7 +601,7 @@ _CONDENSED_HTML = """<!DOCTYPE html>
   #main { display: flex; flex: 1; overflow: hidden; position: relative; }
   #graph { flex: 1; background: #0a0a14; position: relative; }
   #sidebar { width: 340px; border-left: 1px solid #2a2a4e; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
-  #info-panel { padding: 14px; border-bottom: 1px solid #2a2a4e; max-height: 50%; overflow-y: auto; }
+  #info-panel { padding: 14px; border-bottom: 1px solid #2a2a4e; max-height: 35%; overflow-y: auto; }
   #info-panel h3 { font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
   #info-content { font-size: 13px; line-height: 1.5; }
   #info-content .empty { color: #555; font-style: italic; }
@@ -683,6 +683,24 @@ _CONDENSED_HTML = """<!DOCTYPE html>
   #note-modal .nfeedback.err { color: #f85149; }
   .add-note-btn { background: #238636; border: none; color: #fff; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 8px; }
   .add-note-btn:hover { background: #2ea043; }
+  #chat-panel { border-top: 1px solid #2a2a4e; display: flex; flex-direction: column; flex-shrink: 0; max-height: 45%; }
+  #chat-panel h3 { font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 14px 6px; margin: 0; }
+  #chat-bar { display: flex; gap: 6px; padding: 0 14px 8px; }
+  #chat-bar input { flex: 1; background: #0f0f1a; border: 1px solid #3a3a5e; color: #e0e0e0; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-family: inherit; outline: none; }
+  #chat-bar input:focus { border-color: #4E79A7; }
+  #chat-bar button { background: #4E79A7; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+  #chat-bar button:hover { background: #5a8ab8; }
+  #chat-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .chat-mode-btns { display: flex; gap: 4px; padding: 0 14px 6px; }
+  .chat-mode-btns button { background: #1a1a2e; border: 1px solid #3a3a5e; color: #aaa; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  .chat-mode-btns button.active { background: #4E79A7; border-color: #4E79A7; color: #fff; }
+  #chat-results { flex: 1; overflow-y: auto; padding: 0 14px 10px; font-size: 12px; line-height: 1.5; }
+  .chat-result { background: #12121f; border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; border-left: 3px solid #4E79A7; }
+  .chat-result .cr-meta { color: #7a7aaf; font-size: 11px; margin-bottom: 4px; }
+  .chat-result .cr-score { float: right; color: #e5a00d; font-size: 11px; }
+  .chat-result .cr-text { color: #ccc; }
+  .chat-scope { color: #888; font-size: 11px; padding: 0 14px 4px; }
+  .chat-empty { color: #555; font-style: italic; padding: 8px 0; }
 </style>
 </head>
 <body>
@@ -732,6 +750,19 @@ _CONDENSED_HTML = """<!DOCTYPE html>
       <div id="legend"></div>
     </div>
     <div id="stats"></div>
+  </div>
+  <div id="chat-panel">
+    <h3>Query</h3>
+    <div class="chat-scope" id="chat-scope">Select a topic to query</div>
+    <div class="chat-mode-btns">
+      <button class="active" id="btn-mode-context" onclick="setChatMode('context')">Context Search</button>
+      <button id="btn-mode-latest" onclick="setChatMode('latest')">Latest</button>
+    </div>
+    <div id="chat-bar">
+      <input type="text" id="chat-input" placeholder="Type your query..." onkeydown="if(event.key==='Enter')runQuery()">
+      <button id="chat-go" onclick="runQuery()">Search</button>
+    </div>
+    <div id="chat-results"><span class="chat-empty">Results will appear here</span></div>
   </div>
 </div>
 <div id="entity-overlay" onclick="closeEntityDetail()"></div>
@@ -1099,6 +1130,7 @@ function showSuperInfo(sc) {
   sc.member_ids.forEach(cid => { const c = clusterById[cid]; if (c) h += '<span class="related-item" onclick="drillIntoSuper(' + sc.super_id + ')">' + esc(c.label) + ' (' + c.size + ')</span> '; });
   h += '<div class="drill-hint">Double-click to drill in</div>';
   document.getElementById('info-content').innerHTML = h;
+  updateChatScope('super', sc.super_id, sc.label);
 }
 
 function showClusterInfo(c) {
@@ -1113,6 +1145,7 @@ function showClusterInfo(c) {
   h += '<div class="drill-hint">Double-click to see thoughts</div>';
   h += '<button class="add-note-btn" onclick="openCreateNote(' + c.cluster_id + ')">+ Add Note</button>';
   document.getElementById('info-content').innerHTML = h;
+  updateChatScope('cluster', c.cluster_id, c.label);
 }
 
 function showThoughtInfo(t) {
@@ -1333,6 +1366,91 @@ async function submitNote() {
     feedback.className = 'nfeedback err';
     btn.disabled = false;
   }
+}
+
+// ── Chat / Query panel ──
+let chatMode = 'context';
+let chatScope = null; // { type: 'cluster'|'super', id: int, label: str }
+
+function setChatMode(mode) {
+  chatMode = mode;
+  document.getElementById('btn-mode-context').className = mode === 'context' ? 'active' : '';
+  document.getElementById('btn-mode-latest').className = mode === 'latest' ? 'active' : '';
+  const input = document.getElementById('chat-input');
+  if (mode === 'latest') {
+    input.placeholder = 'Press Search to get latest thoughts';
+  } else {
+    input.placeholder = 'Type your query...';
+  }
+}
+
+function updateChatScope(type, id, label) {
+  chatScope = { type, id, label };
+  document.getElementById('chat-scope').innerHTML = '<b>' + esc(label) + '</b> (' + type + ')';
+}
+
+async function runQuery() {
+  if (!chatScope) {
+    document.getElementById('chat-results').innerHTML = '<span class="chat-empty">Click a topic or mega-topic first</span>';
+    return;
+  }
+  const queryText = document.getElementById('chat-input').value.trim();
+  if (chatMode === 'context' && !queryText) {
+    document.getElementById('chat-results').innerHTML = '<span class="chat-empty">Enter a query to search</span>';
+    return;
+  }
+  const btn = document.getElementById('chat-go');
+  btn.disabled = true;
+  document.getElementById('chat-results').innerHTML = '<span class="chat-empty">Searching...</span>';
+  try {
+    const body = {
+      mode: chatMode,
+      scope: chatScope.type === 'super' ? 'super' : 'cluster',
+      scope_id: chatScope.id,
+      query: queryText,
+      n: 10,
+    };
+    const r = await fetch('/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.error) {
+      document.getElementById('chat-results').innerHTML = '<span class="chat-empty" style="color:#f85149;">' + esc(d.error) + '</span>';
+    } else {
+      renderChatResults(d);
+    }
+  } catch(e) {
+    document.getElementById('chat-results').innerHTML = '<span class="chat-empty" style="color:#f85149;">Network error</span>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderChatResults(data) {
+  const el = document.getElementById('chat-results');
+  if (!data.results || !data.results.length) {
+    el.innerHTML = '<span class="chat-empty">No results found</span>';
+    return;
+  }
+  let h = '';
+  data.results.forEach((r, i) => {
+    const date = r.timestamp ? r.timestamp.substring(0, 10) : '';
+    const src = r.source_file || r.source || '';
+    const score = r.similarity !== undefined ? r.similarity.toFixed(3) : '';
+    h += '<div class="chat-result">';
+    if (score) h += '<span class="cr-score">' + score + '</span>';
+    h += '<div class="cr-meta">';
+    if (date) h += date + ' ';
+    if (src) h += '\xb7 ' + esc(src);
+    if (r.repeat_count > 1) h += ' \xb7 \xd7' + r.repeat_count;
+    h += '</div>';
+    h += '<div class="cr-text">' + esc((r.text || '').substring(0, 300)) + '</div>';
+    h += '</div>';
+  });
+  h += '<div style="color:#555;font-size:11px;margin-top:4px;">' + data.count + ' results from ' + data.total + ' thoughts</div>';
+  el.innerHTML = h;
 }
 </script>
 </body>

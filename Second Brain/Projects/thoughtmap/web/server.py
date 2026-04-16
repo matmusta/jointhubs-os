@@ -217,6 +217,9 @@ class ThoughtMapHandler(SimpleHTTPRequestHandler):
         if self.path == "/api/notes":
             self._handle_create_note()
             return
+        if self.path == "/api/query":
+            self._handle_query()
+            return
         self.send_error(404)
 
     def _json_response(self, data: dict | list, status_code: int = 200):
@@ -509,6 +512,183 @@ class ThoughtMapHandler(SimpleHTTPRequestHandler):
 
         rel_path = str(filepath.relative_to(sb_dir)).replace("\\", "/")
         self._json_response({"ok": True, "path": rel_path, "filename": filepath.name})
+
+    def _handle_query(self):
+        """POST /api/query — query thoughts in a cluster or super-cluster.
+
+        Body JSON:
+          mode: "latest" | "context"
+          scope: "cluster" | "super"
+          scope_id: int (cluster_id or super_id)
+          query: str (required when mode="context")
+          n: int (max results, default 10)
+        """
+        import numpy as np
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 50_000:
+            self._json_response({"error": "Payload too large"}, 413)
+            return
+
+        try:
+            body = json.loads(self.rfile.read(content_length))
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        mode = body.get("mode", "latest")
+        scope = body.get("scope", "cluster")
+        scope_id = body.get("scope_id")
+        query_text = str(body.get("query", "")).strip()
+        n = min(int(body.get("n", 10)), 50)
+
+        if scope_id is None:
+            self._json_response({"error": "scope_id is required"}, 400)
+            return
+        if mode == "context" and not query_text:
+            self._json_response({"error": "query is required for mode=context"}, 400)
+            return
+
+        # Load data
+        chunks_path = Path(self._output_dir) / "chunks.json"
+        clusters_path = Path(self._output_dir) / "clusters.json"
+        condensed_path = Path(self._output_dir) / "condensed.json"
+        if not chunks_path.exists() or not clusters_path.exists():
+            self._json_response({"error": "Data files not found"}, 404)
+            return
+
+        with open(chunks_path, "r", encoding="utf-8") as f:
+            chunks = json.load(f)
+        with open(clusters_path, "r", encoding="utf-8") as f:
+            clusters = json.load(f)
+
+        # Resolve member indices for the requested scope
+        if scope == "super":
+            if not condensed_path.exists():
+                self._json_response({"error": "condensed.json not found"}, 404)
+                return
+            with open(condensed_path, "r", encoding="utf-8") as f:
+                condensed = json.load(f)
+            sc = next(
+                (s for s in condensed.get("super_clusters", [])
+                 if s["super_id"] == scope_id),
+                None,
+            )
+            if sc is None:
+                self._json_response({"error": f"Super-cluster {scope_id} not found"}, 404)
+                return
+            member_indices = set()
+            for cid in sc["member_ids"]:
+                cl = next((c for c in clusters if c["cluster_id"] == cid), None)
+                if cl:
+                    member_indices.update(cl.get("member_indices", []))
+            scope_label = sc["label"]
+        else:
+            cl = next((c for c in clusters if c["cluster_id"] == scope_id), None)
+            if cl is None:
+                self._json_response({"error": f"Cluster {scope_id} not found"}, 404)
+                return
+            member_indices = set(cl.get("member_indices", []))
+            scope_label = cl.get("label", "")
+
+        # Gather the subset of chunks
+        subset = []
+        for idx in member_indices:
+            if 0 <= idx < len(chunks):
+                ch = chunks[idx]
+                subset.append({
+                    "idx": idx,
+                    "text": ch.get("text", ""),
+                    "timestamp": ch.get("timestamp", ""),
+                    "source": ch.get("source", ""),
+                    "source_file": ch.get("source_file", ""),
+                    "section": ch.get("section", ""),
+                    "repeat_count": ch.get("repeat_count", 1),
+                })
+
+        if mode == "latest":
+            # Sort by timestamp descending, return top N
+            subset.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+            results = subset[:n]
+            self._json_response({
+                "mode": "latest",
+                "scope": scope,
+                "scope_label": scope_label,
+                "results": results,
+                "count": len(results),
+                "total": len(subset),
+            })
+        else:
+            # mode == "context": vectorize query, similarity search on subset
+            try:
+                from thoughtmap.core.embed import embed_text, load_all_embeddings
+                query_embedding = np.array(embed_text(query_text))
+            except Exception as e:
+                self._json_response({"error": f"Embedding failed: {e}"}, 500)
+                return
+
+            # Load all embeddings and pick the subset
+            try:
+                all_items, all_embeddings = load_all_embeddings()
+            except Exception as e:
+                self._json_response({"error": f"Failed to load embeddings: {e}"}, 500)
+                return
+
+            # Build index mapping: chunk idx → embedding idx
+            # chunks.json is the deduplicated list; all_embeddings is the raw ChromaDB load
+            # We need to match by text since dedup may have reordered
+            subset_embeddings = []
+            subset_matched = []
+            text_to_emb = {}
+            for i, item in enumerate(all_items):
+                key = (item.get("text", "") or "").strip()
+                if key not in text_to_emb:
+                    text_to_emb[key] = all_embeddings[i]
+
+            for s in subset:
+                key = (s["text"] or "").strip()
+                emb = text_to_emb.get(key)
+                if emb is not None:
+                    subset_embeddings.append(emb)
+                    subset_matched.append(s)
+
+            if not subset_embeddings:
+                self._json_response({
+                    "mode": "context",
+                    "scope": scope,
+                    "scope_label": scope_label,
+                    "query": query_text,
+                    "results": [],
+                    "count": 0,
+                    "total": len(subset),
+                })
+                return
+
+            # Cosine similarity
+            emb_matrix = np.array(subset_embeddings)
+            norms = np.linalg.norm(emb_matrix, axis=1)
+            norms[norms == 0] = 1
+            normed = emb_matrix / norms[:, np.newaxis]
+            q_norm = query_embedding / (np.linalg.norm(query_embedding) or 1)
+            similarities = normed @ q_norm
+
+            top_indices = np.argsort(similarities)[::-1][:n]
+            results = []
+            for i in top_indices:
+                item = subset_matched[i].copy()
+                item["similarity"] = round(float(similarities[i]), 4)
+                item["text"] = item["text"][:500]
+                results.append(item)
+
+            self._json_response({
+                "mode": "context",
+                "scope": scope,
+                "scope_label": scope_label,
+                "query": query_text,
+                "results": results,
+                "count": len(results),
+                "total": len(subset),
+            })
 
     def log_message(self, format, *args):
         # Suppress noisy request logs; status polls are frequent
