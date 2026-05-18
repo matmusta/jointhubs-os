@@ -1,58 +1,194 @@
 # Daily Review — Cloud Desktop Scheduled Task
 
-You are running the end-of-day review for Stachu (Mateusz Stachowicz). Today's date is {TODAY_DATE}. Run every step carefully and save a complete review note at the end.
+You are running the end-of-day review for the user. Today's date is {TODAY_DATE}. Run every step carefully and save a complete review note at the end.
 
-**Core rule:** Be efficient with browsing. Do NOT re-read or re-screenshot messages already covered in previous reviews. Always check what the last review already captured before opening any communication channel.
+Assume these placeholders are configured for the user's environment:
+- `{REPO_ROOT}` — root of the `jointhubs-os` repository
+- `{SECOND_BRAIN}` — `{REPO_ROOT}/Second Brain`
+- `{PERSONAL_VAULT_ROOT}` — optional external Obsidian vault root
+- `{PERSONAL_DAILY}` — optional personal daily-notes folder inside the external vault
+- `{WISPR_DB}` — optional path to `flow.sqlite`
+
+**Core rules:**
+1. **Token efficiency over completeness.** Every browsing action costs tokens. Prefer MCP → API → file-based tracking → browser (last resort). Never screenshot a feed or timeline.
+2. **Delta-only reading.** Use the thread-state file (Step 0b) to track last-seen IDs/timestamps per channel. Only fetch what changed since last run.
+3. **ThoughtMap-out is your compass.** Use pre-computed entities, clusters, and topics before semantic querying. They cost ~zero tokens and already encode the knowledge structure.
+4. **Build a compact ThoughtMap context pack early.** After Step 1, convert the warm-set retrieval into: Prior decisions, Open threads, Reusable assets, Freshest relevant source, Gaps / conflicts. Use that pack through Steps 2-9 instead of carrying raw search results.
+
+**Tool preference ladder:**
+- Gmail / Tasks / Calendar / Drive → **Google Workspace MCP** (`mcp_googleworkspa_*` tools) if available in this runtime
+- If MCP unavailable → Google APIs via Python scripts
+- Browser automation → only for channels with no API (Discord DMs, LinkedIn) and only for deltas
+- At the start of Step 2, test MCP availability with one call; if it fails, log it and fall back
 
 ---
 
 ## STEP 0 — Load previous reviews + build message watermark
 
+### 0a — Read previous reviews
 Read the last 3 daily review files from:
-`C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\Personal\daily\`
+`{SECOND_BRAIN}/Operations/Reviews/`
 
 Files: `{YESTERDAY_DATE}-review.md`, `{2_DAYS_AGO}-review.md`, `{3_DAYS_AGO}-review.md` (up to 5 days back if gaps exist).
 
 Extract:
-- **Message watermark** — note the latest message date/sender already logged per channel (Gmail, Discord, LinkedIn). In subsequent steps, only read messages NEWER than this watermark. This prevents duplicate scanning.
 - **Carry-forward items** — unresolved action items, blockers, open questions
 - **Recurring themes** — patterns across days (anything appearing 3+ times = trend)
 - **People tracker** — which people had pending responses or open threads
 
-Keep a running carry-forward list — you'll merge it at the end.
+### 0b — Load / initialize thread-state file
+
+Maintain a single state file that tracks last-seen message markers per channel and per thread. This is the mechanism that makes subsequent steps cheap.
+
+**Path:** `{SECOND_BRAIN}/Personal/peers/thread-state.json`
+
+Schema:
+```json
+{
+  "updated": "2026-04-21T19:30:00",
+  "channels": {
+    "gmail": {
+      "last_history_id": "123456",
+      "last_message_date": "2026-04-21T18:42:00Z",
+      "threads": {
+        "<thread-id>": {
+          "last_message_id": "...",
+          "last_seen": "2026-04-21T18:42:00Z",
+          "status": "pending-reply | answered | closed",
+          "priority": "critical | important | info",
+          "subject": "...",
+          "counterparty": "..."
+        }
+      }
+    },
+    "discord": {
+      "last_scan": "2026-04-21T19:00:00Z",
+      "dms": { "<user>": { "last_message_ts": "...", "status": "..." } },
+      "servers": { "jointhubs": { "<channel>": { "last_message_ts": "..." } } }
+    },
+    "linkedin": { "last_scan": "2026-04-21", "notes": "derived from email notifications only" }
+  },
+  "folder_sizes": { "<path>": { "size_mb": 0, "files": 0, "checked": "..." } }
+}
+```
+
+**Rules:**
+- If the file does not exist, create it with empty channels and establish baselines in later steps.
+- Treat it as **read-write**. Update in place at the end of each step that touched a channel.
+- The watermark from this file is law: never re-summarize threads whose `last_seen` ≥ their actual latest message.
+- Only open a thread in browser/MCP if its `status` is `pending-reply` or the thread is new.
 
 ---
 
-## STEP 1 — Discover and load graphify graphs
+## STEP 1 — Load ThoughtMap-out as the knowledge compass
 
-Scan for all `graphify-out/GRAPH_REPORT.md` files under:
-- `C:\Users\mateu\Documents\GitHub\jointhubs-os\`
-- `C:\Users\mateu\Documents\Obsidian Vault\`
+ThoughtMap-out is the pre-computed semantic map of the user's knowledge base. Use it as your primary navigation index — it replaces the old graphify scan and costs near-zero tokens.
 
-**Currently known graphs (list grows over time):**
-- `Second Brain/Personal/Profile/graphify-out/` — professional identity
-- `Second Brain/Projects/jointhubs/graphify-out-strategic/` — full project graph
+**Root:** `{SECOND_BRAIN}/Operations/thoughtmap-out/`
 
-For each graph found, read `GRAPH_REPORT.md`. Select 1-2 most relevant to today's context:
-- Note active communities, God Nodes, and Surprising Connections
-- Check build date — if >2 weeks old and folder changed heavily, flag as stale
+### 1a — Read the overview
 
-**Confidence levels:** `EXTRACTED` = safe to rely on · `INFERRED` = confirm in source · `AMBIGUOUS` = flag as open question only
+Read `REPORT.md` (top of file is enough):
+- Total chunks, clusters, and unclustered count — gauge knowledge-base scope
+- **Sources** table — which inputs are fresh vs. stale (e.g., low wispr-flow count = the user hasn't recorded recently)
+- **Named Entities** top list — most-mentioned people, orgs, projects, tools (this is your active-context roster)
+- **God Nodes** — the 5 largest clusters, i.e. what the user's mind is most focused on
+- **Bridge Thoughts** — cross-domain connections (these are the ideas worth revisiting today)
+
+### 1b — Staleness check
+
+Check the REPORT.md build timestamp. If >7 days old, flag: "ThoughtMap is stale, consider rebuild." If >14 days, treat entity/cluster data as advisory only and lean harder on ChromaDB query (Step 9).
+
+### 1c — Lazy indexes to keep handy (don't read yet, reference as needed)
+
+| File / Folder | Read when… |
+|---------------|------------|
+| `entities/_entity-index.md` | A name appears in today's inputs — look up quick context |
+| `entities/person/<slug>.md` | Preparing to message someone — see boundaries, clusters, source files |
+| `entities/project/<slug>.md` | Logging project work — see which clusters it spans |
+| `topics/<slug>.md` | A theme appears today — find related topics and representative fragments |
+| `clusters.json` | Need machine-readable cluster metadata (size, centroid, members) |
+| `condensed.json` | Looking for inter-cluster similarity and bridge thoughts |
+| `entities.json` | Need all entities + area-context metrics in one scan |
+
+**Rule:** Do not dump entire JSON files into context. Grep/filter for the entity or cluster you need.
+
+### 1d — Seed today's entity list
+
+From the people, projects, and topics appearing in carry-forward (Step 0a), pre-load their entity notes if they exist. These become the "warm set" used by Steps 2–9.
+
+### 1e — Run a small semantic warm set
+
+For the 3-6 highest-signal anchors from carry-forward, `REPORT.md`, top entities, and likely active projects:
+- run a short semantic bundle using the exact phrasing when available,
+- then `"<anchor> current status"`,
+- then `"<anchor> open questions"` or `"<anchor> next step"`.
+
+Keep strong hits when possible (`distance < 0.40`) and read the top 1-2 backing source files for the best matches.
+
+This is not the full historical synthesis yet. The goal here is only to establish the **warm set** for the rest of the review.
+
+### 1f — Build today's ThoughtMap context pack
+
+Before Step 2, distill the warm set into a compact working memory block:
+
+```markdown
+## ThoughtMap Context Pack
+
+**Prior decisions**:
+- [max 5 bullets, source-backed]
+
+**Open threads**:
+- [max 5 bullets]
+
+**Reusable assets**:
+- [max 5 bullets]
+
+**Freshest relevant source**:
+- [1-3 bullets with date + file]
+
+**Gaps / conflicts**:
+- [max 3 bullets]
+```
+
+Rules:
+- every field should point to a concrete source where possible,
+- if evidence is weak or mixed, record it under `Gaps / conflicts`,
+- use this pack as the working context for Steps 2-9 instead of dragging raw search hits forward.
 
 ---
 
-## STEP 2 — Gmail scan (watermark-aware)
+## STEP 2 — Gmail scan (MCP-first, delta-only)
 
-Search Gmail for messages received since the message watermark from Step 0 (or last 96h if no watermark exists).
+### 2a — Probe MCP availability
 
-Focus on:
-- Direct messages or replies (skip newsletters/automated unless action-required)
-- Anything mentioning Fenix, Neurohubs, Asystent Urzędnika, jointhubs
-- Urgent or action-required items
+Try a lightweight call to the Google Workspace MCP (tools prefixed `mcp_googleworkspa_*`). If it responds, use it for all Gmail/Tasks/Calendar/Drive steps. If unavailable in this Claude Desktop runtime, fall back to:
+1. Google API via Python (creds at standard location), OR
+2. Gmail web UI in browser — but **only** open threads flagged `pending-reply` in thread-state, or threads newer than `last_history_id`.
 
-Log each message with: `| Sender | Subject | Date | Priority | Response needed? |`
+Log which path was used: `Gmail source: MCP | API | browser`.
 
-Priority: 🔴 critical · 🟡 important · ℹ️ informational
+### 2b — Fetch deltas only
+
+Using the `last_history_id` or `last_message_date` from thread-state (Step 0b):
+- MCP / API: request messages `after:{last_message_date}` (add 1-second margin)
+- If no watermark exists: fetch last 96h as baseline
+
+**Scope filter:**
+- Skip: newsletters, automated notifications (GitHub, LinkedIn, CI), calendar invites already in Calendar step — unless explicitly action-required
+- Keep: direct human replies, project-keyword matches (Fenix, Neurohubs, Asystent Urzędnika, jointhubs, GlobalLogic)
+- Keep: anything from people in the ThoughtMap entity roster (Step 1d)
+
+### 2c — Update thread-state
+
+For each new message: record thread ID, counterparty, subject, date, status (`pending-reply` / `answered` / `closed`), priority. Bump `last_history_id` and `last_message_date`.
+
+### 2d — Log to review
+
+Only include new or status-changed threads in the review table:
+`| Sender | Subject | Date | Priority | Response needed? |`
+
+Priority: 🔴 critical · 🟡 important · ℹ️ informational. **Do not screenshot Gmail under any condition.**
 
 ---
 
@@ -89,16 +225,33 @@ Merge into the master task list used in Step 11.
 
 ## STEP 4 — Obsidian vault: daily note + modified files + task scan
 
-Read today's daily note if it exists:
-`C:\Users\mateu\Documents\Obsidian Vault\10. Operations\Daily\{TODAY_DATE}.md`
+The user may create notes in **both** vaults. Always scan both.
 
-Scan for recently modified/created files (last 24h, exclude .git):
-- `C:\Users\mateu\Documents\GitHub\jointhubs-os\`
-- `C:\Users\mateu\Documents\Obsidian Vault\`
+**Vault roots:**
+- Repo vault: `{SECOND_BRAIN}` (read + write)
+- Personal vault: `{PERSONAL_VAULT_ROOT}` (READ-ONLY)
 
-Summarize what changed. Cross-reference with graphify graphs — if a changed file maps to a god node or bridge node, flag as higher signal.
+### 4a — Read today's daily notes
 
-### 4b — Scan for Obsidian Tasks in vault notes
+Check both vault locations — the user may use either or both:
+- Personal vault: `{PERSONAL_DAILY}/{TODAY_DATE}.md`
+- Repo vault: `{SECOND_BRAIN}/Operations/Periodic Notes/Daily/{TODAY_DATE}.md`
+- Repo vault (alt location): `{SECOND_BRAIN}/Operations/Reviews/{TODAY_DATE}.md`
+
+### 4b — Scan for modified files (last 24h)
+
+Recursive modified-file scan in both vaults, excluding `.git`, `.obsidian`, `node_modules`, `__pycache__`, `data/chroma`, `graphify-out`, `thoughtmap-out` (regenerated output, not authored content).
+
+PowerShell:
+```powershell
+Get-ChildItem -Path "{PERSONAL_VAULT_ROOT}", "{SECOND_BRAIN}" -Recurse -File -Include *.md -ErrorAction SilentlyContinue |
+  Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-24) -and $_.FullName -notmatch '\\\.(git|obsidian)\\|\\thoughtmap-out\\|\\graphify-out' } |
+  Select-Object FullName, LastWriteTime | Sort-Object LastWriteTime -Descending
+```
+
+Summarize what changed. **Cross-reference with ThoughtMap entities/clusters** — if a changed file appears as a `source_file` in an entity note or a representative chunk in a cluster, flag as higher signal.
+
+### 4c — Scan for Obsidian Tasks in vault notes
 
 Search all recently modified `.md` files (and today's daily note) for **Obsidian Tasks plugin** tasks. These are NOT regular checkboxes — they are identifiable by emoji markers for dates and priority.
 
@@ -117,32 +270,40 @@ This matches lines like:
 **Emoji legend:**
 | Emoji | Meaning |
 |-------|---------|
-| `📅`  | Due date |
-| `🛫`  | Start date |
-| `⏳`  | Scheduled date |
-| `➕`  | Created date |
+| `📅`  | Date stamp (usually when the task was **written/saved** — NOT a deadline) |
+| `🛫`  | Date stamp (usually when recording started — NOT a start date constraint) |
+| `⏳`  | Date stamp (recording/scheduled note timestamp) |
+| `➕`  | Created date (when the task line was added to the note) |
 | `⏫`  | Highest priority |
 | `🔼`  | High priority |
 | `🔺`  | Medium priority |
 | `🔽`  | Low priority |
 
+> **Important:** In the user's vault, date emojis (`📅`, `🛫`, `⏳`, `➕`) record *when the task was written or saved* — they are NOT deadlines or scheduling constraints. **Urgency is determined solely by the priority emoji.** Do not interpret any date emoji as a due date unless the task text itself explicitly states a deadline (e.g., "by Friday", "before demo").
+
 **Rules:**
 - A valid Obsidian Task must have **at least one date emoji** AND **a priority emoji** — ignore plain `- [ ]` checkboxes without these markers
 - `- [ ]` = open task, `- [x]` = completed task
 - Extract: task name, status (open/done), all dates, priority, source file path
-- Note which file each task lives in — this tells you where Stachu defined it
+- Note which file each task lives in — this tells you where the user defined it
 
-**Where to search:**
-1. Obsidian Vault `C:\Users\mateu\Documents\Obsidian Vault\`
+**Where to search (both vaults, all subdirectories):**
+1. Personal Obsidian Vault: `{PERSONAL_VAULT_ROOT}` — all folders, not just Daily/Weekly
+2. Repo Second Brain: `{SECOND_BRAIN}` — all folders including Projects/, Personal/, Operations/
+3. Project CONTEXT.md files (tasks often embedded there)
+4. Today's and this week's notes in both vaults
 
+Use `grep_search` with the regex above across both roots in parallel. Exclude `thoughtmap-out/`, `graphify-out/`, `.git/`, `.obsidian/`.
 
 **Output as table:**
 ```
-| Task | Priority | 📅 Due | 🛫 Start | Status | Source file |
-|------|----------|--------|----------|--------|-------------|
+| Task | Priority | Recorded (📅/➕) | Status | Source file |
+|------|----------|--------------------|--------|-------------|
 ```
 
-These tasks feed into Step 11a — they represent commitments Stachu wrote directly in his notes and must be cross-referenced with Google Tasks to avoid duplication or orphaning.
+The date column records when the task was written — it is not a deadline. Sort by priority emoji, not by date.
+
+These tasks feed into Step 11a — they represent commitments the user wrote directly in the notes and must be cross-referenced with Google Tasks to avoid duplication or orphaning.
 
 ---
 
@@ -151,9 +312,9 @@ These tasks feed into Step 11a — they represent commitments Stachu wrote direc
 Monitor key directories for growth, unexpected changes, or bloat. Run a quick size scan:
 
 **Directories to monitor:**
-- `C:\Users\mateu\Documents\GitHub\` — all repos (list each subfolder with size)
-- `C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\` — vault inside repo
-- `C:\Users\mateu\Documents\Obsidian Vault\` — main Obsidian vault
+- `{REPO_ROOT}/..` — all sibling repos (list each subfolder with size)
+- `{SECOND_BRAIN}` — vault inside repo
+- `{PERSONAL_VAULT_ROOT}` — main Obsidian vault
 
 **For each directory, report:**
 ```
@@ -171,32 +332,43 @@ Monitor key directories for growth, unexpected changes, or bloat. Run a quick si
 
 Use PowerShell: `Get-ChildItem -Directory | ForEach-Object { $size = (Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum; [PSCustomObject]@{Name=$_.Name; SizeMB=[math]::Round($size/1MB,1)} }`
 
-Compare with the previous review's folder sizes (from Step 0 carry-forward). If no previous data exists, establish baseline.
+Compare with the `folder_sizes` map in `thread-state.json` (Step 0b). Update that map with today's values at the end of this step.
 
 ---
 
-## STEP 6 — Discord (watermark-aware, selective)
+## STEP 6 — Discord (thread-state driven, minimal browsing)
 
-**Before opening Discord**, check the message watermark from Step 0. Only read messages NEWER than the last logged date per contact.
+Discord has no stable public API for user accounts, so browser is the only path. Minimize it aggressively.
 
-Check:
-- Direct Messages — unread only
-- Jointhubs server — relevant channels only, last 96h
+### 6a — Plan the visit from thread-state
 
-**Do NOT** read or summarize messages from any other server.
+Before opening Chrome, decide what to check:
+1. Read `channels.discord` from `thread-state.json` (Step 0b)
+2. List DMs with `status: pending-reply` or unknown — these are the only ones to open
+3. List jointhubs server channels whose `last_message_ts` is >24h old — check once for activity, no deeper scan
 
-Log new messages with: `| Contact | Last message | Date | Status | Channel |`
+If nothing is `pending-reply` and last scan was <12h ago: **skip Discord entirely** and note: "Discord skipped — no pending threads, last scan <12h."
 
-Status: ✅ answered · ⌛ pending reply · 🔴 overdue (>3 days)
+### 6b — Minimal browsing protocol
 
-If Chrome unavailable, skip.
+If opening Chrome:
+- Open Discord in an already-authenticated tab if possible
+- Navigate directly to each pending DM / channel (one URL per target, no sidebar scrolling)
+- Read text via `read_page` — **never** `screenshot_page` a chat feed
+- Capture only: last message text (truncated to 300 chars), timestamp, sender. Stop reading once you hit a message older than `last_message_ts`.
+
+### 6c — Update thread-state
+
+For each checked conversation, update `last_message_ts`, `status`, and add a summary line to the review only if status changed or new message arrived.
+
+**Do NOT** read or summarize messages from any other server. If Chrome unavailable, skip and log it.
 
 ---
 
 ## STEP 7 — LinkedIn (file-based tracking only)
 
 **Do NOT open LinkedIn in browser.** Instead, maintain a communication log file:
-`C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\Personal\peers\linkedin-tracker.md`
+`{SECOND_BRAIN}/Personal/peers/linkedin-tracker.md`
 
 If the file exists, read it. If not, create it with this structure:
 
@@ -225,7 +397,7 @@ Cross-reference with peer notes in `Second Brain/Personal/peers/` and any Linked
 ## STEP 8 — Communication map (per-person, cross-channel)
 
 Build or update a communication overview file:
-`C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\Personal\peers\communication-map.md`
+`{SECOND_BRAIN}/Personal/peers/communication-map.md`
 
 Structure:
 
@@ -256,7 +428,7 @@ Query the ThoughtMap ChromaDB vector database to enrich today's review with hist
 
 ### 9a — Extract today's key topics
 
-From Steps 0-8, identify the **5-8 most significant topics, names, or concepts** discussed today. Examples:
+From today's ThoughtMap context pack and Steps 0-8, identify the **5-8 most significant topics, names, or concepts** discussed today. Examples:
 - Project names: "Fenix demo", "Asystent Urzędnika deployment"
 - People: "Anna Buchwald", "Artur Povodor"
 - Technical topics: "RAG pipeline", "Docker security"
@@ -266,7 +438,7 @@ From Steps 0-8, identify the **5-8 most significant topics, names, or concepts**
 
 For each key topic, run a semantic similarity search against the ThoughtMap collection.
 
-**Database location:** `C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\Projects\thoughtmap\data\chroma\`
+**Database location:** `{SECOND_BRAIN}/Projects/thoughtmap/data/chroma/`
 **Collection name:** `thoughtmap`
 
 **Query method — run this Python script** (requires the thoughtmap venv):
@@ -275,7 +447,7 @@ For each key topic, run a semantic similarity search against the ThoughtMap coll
 import chromadb
 
 client = chromadb.PersistentClient(
-    path=r"C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\Projects\thoughtmap\data\chroma"
+  path=r"{SECOND_BRAIN}/Projects/thoughtmap/data/chroma"
 )
 collection = client.get_collection("thoughtmap")
 
@@ -302,7 +474,7 @@ for q in queries:
 ```
 
 **If Ollama is not running** (embedding model needed for query), fall back to reading the pre-built cluster files:
-`C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\Operations\thoughtmap-out\clusters\*.md`
+`{SECOND_BRAIN}/Operations/thoughtmap-out/clusters/*.md`
 
 Scan cluster titles for topic matches and read the relevant cluster files for context.
 
@@ -320,6 +492,13 @@ Based on historical context, produce for each active topic:
 - **Previously explored** — "This was discussed on [date], decision was [X]" or "You considered [Y] but didn't pursue it"
 - **Recurring without closure** — "This topic appeared [N] times in the last month without being resolved"
 - **New direction proposals** — Based on what's in the history + what happened today, suggest 1-2 concrete next steps or angles not yet explored
+
+For high-signal topics, express the synthesis as a mini context pack:
+- **Prior decisions**
+- **Open threads**
+- **Reusable assets**
+- **Freshest relevant source**
+- **Gaps / conflicts**
 
 Output this as a dedicated section in the review (see Step 14 template).
 
@@ -362,7 +541,7 @@ Gather tasks from:
 - **Obsidian Tasks found in Step 4b** (vault notes with 📅/🛫/⏳ + priority emoji)
 - Google Tasks
 
-Cross-reference Obsidian Tasks (Step 4b) with Google Tasks (Step 3c) — deduplicate by matching task names. If an Obsidian Task has no matching Google Task and is still open, flag it for Google Tasks creation in Step 11e so it appears in Calendar.
+Cross-reference Obsidian Tasks (Step 4b) with Google Tasks (Step 3c) — deduplicate by matching task names. If an Obsidian Task has no matching Google Task and is still open, flag it for Google Tasks creation in Step 11e so it appears in Calendar. **Do not use the Obsidian Task date emojis as due dates when creating Google Tasks** — assign a due date based on priority and context instead (e.g., `⏫` → today/tomorrow, `🔼` → this week, `🔺/🔽` → next available slot).
 
 ### 11b — Triage and prioritize
 For each task, assign:
@@ -371,10 +550,22 @@ For each task, assign:
 - Deadline if known
 
 ### 11c — Schedule into calendar free blocks
-Using the availability grid from Step 3b, suggest concrete time blocks for top-priority tasks:
+
+**First, split tasks into two buckets before scheduling:**
+
+**Maintenance window bucket** — tasks that are: purely operational, require no creative energy, and take <15 min each (e.g. password resets, sending a ready draft, security alerts, quick acks). If today is Monday, schedule these as a batch at 08:00–09:00. On other days, group them at the start of the first available 30-min slot before GL hours. Do NOT scatter them across the day as individual priority items.
+
+**Focus work bucket** — everything else: project work, demos, analysis, creative output. Schedule these in the best available deep-work blocks.
+
+Using the availability grid from Step 3b, suggest concrete time blocks:
 
 ```
-📅 Suggested schedule:
+🔧 Maintenance window (batch — Mon 08:00–09:00 or first available slot):
+- reset AWS password (2 min)
+- send Pietro email (1 min)
+- [any other <15 min operational items]
+
+📅 Focus schedule:
 - Wed 15 Apr, 16:30-17:30 → 🔴 Prepare Fenix demo (1h)
 - Wed 15 Apr, 17:30-18:00 → 🟡 Reply to Anna Buchwald (30m)
 - Thu 16 Apr, 07:00-08:00 → 🟡 Review SCE paper (1h)
@@ -386,6 +577,7 @@ Rules:
 - Prefer evening blocks (16:00-19:00) for calls and communication
 - Don't overload any single day — max 3h of scheduled own-work outside GL hours
 - Weekend blocks only for 🔴 critical items
+- A task that has been carry-forward for 3+ weeks AND takes <15 min belongs in maintenance window, not in focus schedule
 
 ### 11d — Tasks that need calendar events
 If a task requires a specific time (call, meeting, deadline), suggest creating a Google Calendar event with exact details.
@@ -424,7 +616,7 @@ Check for new Wispr Flow transcriptions that haven't been processed yet.
 
 **How to detect new transcripts:**
 Wispr Flow saves transcriptions to the SQLite database at:
-`C:\Users\mateu\AppData\Roaming\Wispr Flow\flow.sqlite`
+`{WISPR_DB}`
 
 ThoughtMap already extracts these during its pipeline. Check for recent chunks in ChromaDB with `source: wispr-flow` and `timestamp > {YESTERDAY_DATE}`.
 
@@ -483,20 +675,22 @@ Cross-reference all people mentioned today with `Second Brain/Personal/peers/`:
 
 ---
 
-## STEP 14 — Graph insights
+## STEP 14 — ThoughtMap entity & cluster insights
 
-Based on graphify graphs loaded in Step 1:
-1. **Graph-signal connections** — map today's events to specific communities or god nodes
-2. **Silent communities** — any community that should be active but has no signals today
-3. **Cross-domain bridges** — surprising connections between today's inputs
-4. **Staleness check** — flag any graph that needs rebuild
+Using the ThoughtMap-out data loaded in Step 1 and the topics identified in Step 9a, produce structural insights:
+
+1. **Entity activation map** — which entities from today's inputs (people, projects, orgs) had signals in which channels? Cross-reference with their entity notes (`entities/{type}/<slug>.md`) to see if today's events fall within their usual Topic Boundaries or represent a new edge.
+2. **Cluster coverage** — which clusters did today's activity touch? Reference cluster IDs from `clusters.json` or topic notes.
+3. **Silent god nodes** — any of the top-5 clusters from REPORT.md that had NO signal today? Flag as attention gaps if silent 3+ days running.
+4. **New bridges** — did today's inputs connect two clusters that weren't related in `condensed.json`? That's a potentially novel connection — log it for possible extraction into a new note.
+5. **Staleness** — if REPORT.md build date is >7 days old OR vault had >20 new/modified notes since build, flag: "ThoughtMap rebuild recommended."
 
 ---
 
 ## STEP 15 — Save output
 
 Save the review to:
-`C:\Users\mateu\Documents\GitHub\jointhubs-os\Second Brain\Personal\daily\{TODAY_DATE}-review.md`
+`{SECOND_BRAIN}/Operations/Reviews/{TODAY_DATE}-review.md`
 
 ```markdown
 ---
@@ -509,8 +703,8 @@ type: daily-review
 ## Summary
 [3-5 bullet points of the most important things today]
 
-## Graphs Loaded (graphify)
-[Table: graph path, nodes, edges, communities, build date, relevance]
+## ThoughtMap Snapshot
+[From REPORT.md: build date, top 3 god nodes, top 5 entities by mention, any stale flag]
 
 ## Gmail
 [New messages since watermark, formatted as table]
@@ -577,11 +771,11 @@ type: daily-review
 ### New directions
 [1-3 concrete suggestions based on history + today's context]
 
-## Graph Insights
-[1-2 observations anchored in graph data]
+## ThoughtMap Insights
+[Entity activation map, silent god nodes, new bridges, staleness flag]
 
 ## Follow-Up Questions
-[2-4 questions for Stachu to think about or act on]
+[2-4 questions for the user to think about or act on]
 
 ## Tips & Observations
 [1-2 proactive suggestions based on weekly patterns]
@@ -593,13 +787,15 @@ If any section was unavailable (Chrome offline, API blocked), note it clearly ra
 
 ## Operational rules
 
-1. **Screenshot discipline** — Only take screenshots when text extraction fails. Prefer reading page content directly. Never screenshot full feeds or timelines.
-2. **Message deduplication** — The watermark from Step 0 is law. Never re-summarize a message already in a previous review unless its status changed.
-3. **Time awareness** — All scheduling respects GlobalLogic 09:00-16:00 constraint. Stachu's productive own-work hours are typically 07:00-09:00 and 16:00-20:00.
-4. **Polish/English** — Section headers in English, content can mix Polish and English naturally as Stachu does.
-5. **Peer tracking** — Every person mentioned in any channel gets checked against `peers/`. Missing = flag for creation.
-6. **File creation** — Create `linkedin-tracker.md` and `communication-map.md` only if they don't exist yet. Update in-place on subsequent runs.
-7. **Google Tasks sync** — Every action item must be tracked: either as a time block in the schedule or as a Google Task with a due date. No orphaned tasks.
-8. **Wispr Flow sessions** — Propose max 1 recording session per day. Pick topics where voice articulation will unlock progress faster than writing. Always provide guiding questions so the recording is focused.
-9. **Wispr transcript processing** — When processing transcripts, prefer updating existing notes over creating new ones. Only create a new note when the topic doesn't have a home yet in Second Brain. Always link back from the daily review.
-10. **Second Brain note creation** — When creating notes from any source (Wispr, analysis, synthesis), follow the vault conventions: frontmatter with type/status/date, proper folder placement, wikilinks to related notes.
+1. **Tool ladder** — Google Workspace MCP → Google API → file-based tracker → browser. Probe MCP once at Step 2a; if unavailable, note it and descend. Never re-probe within the same run.
+2. **Zero-screenshot default** — Never screenshot a feed, inbox, timeline, or chat. Screenshots are allowed only for a single element when text extraction genuinely fails, and must be justified in the output.
+3. **Delta-only reading** — `thread-state.json` is the single source of truth for what's already been seen. Never re-summarize a thread whose `last_seen` ≥ its actual latest message. Update the state file after every channel touched.
+4. **ThoughtMap routing before semantic grounding** — For entity and topic lookups, read pre-computed notes in `thoughtmap-out/entities/` and `thoughtmap-out/topics/` first, then build a small semantic warm set and compact context pack for active anchors. Use deeper ChromaDB work in Step 9 for historical synthesis, not as the first or only move.
+5. **Dual-vault scanning** — Always scan both `{PERSONAL_VAULT_ROOT}` and `{SECOND_BRAIN}` for daily notes, Obsidian Tasks, and modified files. Personal vault is read-only.
+6. **Time awareness** — GlobalLogic 09:00-16:00 Mon-Fri is soft-blocked. Own-work deep focus: 07:00-09:00 and 16:00-20:00.
+7. **Polish/English** — Section headers in English; body content may mix Polish and English if that matches the user's notes.
+8. **Peer tracking** — Every person mentioned anywhere gets cross-referenced with `Second Brain/Personal/peers/` and with `thoughtmap-out/entities/person/`. Missing peer note → flag for creation.
+9. **Google Tasks sync** — Every action item must be tracked: either a time block in Step 11c or a Google Task with due date in Step 11e. No orphans.
+10. **Wispr Flow discipline** — Max 1 proposed recording session per day. Pick topics where voice articulation unlocks progress faster than writing. When processing transcripts, prefer updating existing notes over creating new ones; always wikilink back from the daily review.
+11. **Second Brain note creation** — Follow vault conventions: frontmatter with `type`/`status`/`date`, correct folder, wikilinks to related notes and to relevant `thoughtmap-out/entities/` or `topics/` files.
+12. **State hygiene** — At the end of the run, `thread-state.json` must reflect reality: updated watermarks, updated folder sizes, updated thread statuses. This is the contract with tomorrow's run.
