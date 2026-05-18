@@ -56,6 +56,22 @@ Second Brain/Operations/Meetings/**/*.md
 !Second Brain/Operations/Meetings/README.md
 !Second Brain/Operations/Meetings/**/README.md
 
+# Personal operations (reviews, summaries, linkedin drafts)
+Second Brain/Operations/weekly-reviews/
+Second Brain/Operations/weekly-status/
+Second Brain/Operations/Reviews/
+Second Brain/Operations/linkedin/
+Second Brain/Operations/Communication/
+Second Brain/Operations/Kanban/
+**/linkedin/
+
+# ThoughtMap output (generated from YOUR notes — sensitive)
+Second Brain/Operations/thoughtmap-out/
+!Second Brain/Operations/thoughtmap-out/README.md
+
+# Obsidian sub-vault config (personal)
+Second Brain/.obsidian/
+
 # Personal - ignore all notes recursively (contains sensitive data)
 Second Brain/Personal/**
 !Second Brain/Personal/README.md
