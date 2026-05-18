@@ -10,6 +10,8 @@ Fork it. Personalize it. Let AI agents that actually *know you* handle the grind
 
 **Your brain works differently. Your AI assistant should too.**
 
+It is already useful before the system is "finished". Even in its current state, the stack can turn daily notes, reviews, and voice transcripts into a working planning surface: recurring reviews, entity tracking, project memory, and a map of what keeps showing up across your week.
+
 ---
 
 ## Why Jointhubs OS?
@@ -158,6 +160,33 @@ jointhubs-os/
 | **Instructions** | `.github/instructions/*.instructions.md` | Rules auto-applied by file path |
 | **Notes** | `Second Brain/` | Your notes, read and written by agents for context |
 
+## Public-Safe Fork Workflow
+
+If you want to use this repo as your own operating system and still contribute upstream, keep a hard boundary between `shared framework` and `personal operating data`.
+
+**Safe to commit upstream:**
+- framework code, docs, templates, shared prompts, shared agents, shared skills
+- generic examples that do not reference real people, private projects, or local machine paths
+
+**Keep local only:**
+- personal notes and journals
+- communication logs, daily execution boards, generated reviews, and ThoughtMap output built from your own notes
+- machine-specific prompts, instructions, and experiments in `.github/*/local/`
+
+Recommended flow:
+
+1. Commit only public-safe files to your fork.
+2. Push your branch or `main` to `origin`.
+3. Open a Pull Request from your fork into `upstream`.
+4. Keep personal workflows and note content in ignored paths or local-only prompt/instruction folders.
+
+Before pushing, run a quick audit:
+
+```bash
+git status --short --ignored
+git diff --cached
+```
+
 ---
 
 ## Customization
@@ -184,6 +213,8 @@ Every customization layer has a `local/` subfolder for private files that won't 
 - `.github/prompts/local/` - Private prompts
 - `.github/instructions/local/` - Private instructions
 - `.vscode/mcp.json` - Your MCP credentials (gitignored)
+
+If a workflow includes your real name, private contacts, or absolute file-system paths, treat it as local by default and move it under the matching `local/` folder before opening a PR.
 
 ---
 
