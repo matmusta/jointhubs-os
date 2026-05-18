@@ -49,6 +49,27 @@ docker compose up
         └── Serves interactive visualization at /
 ```
 
+## How It Works
+
+For a deep technical explanation of how ThoughtMap extracts **clusters**, **topics**, and **entities**, see **[Extraction Pipeline Architecture](docs/extraction-pipeline.md)**.
+
+Key stages:
+
+1. **Step 6: Clustering** — UMAP dimensionality reduction (768d → 15d → 2d) + HDBSCAN density clustering to find topic groups
+2. **Step 7: Condensation** — LLM summarization of each cluster, inter-cluster edges, super-clustering (mega-topics), and Obsidian topic notes
+3. **Step 8: Entity Extraction** — Named entity recognition via spaCy + regex cache + heuristics, deduplication, LLM validation, enrichment with cluster context
+4. **Kanban Intake Generation** — post-processing from recent reviews, communication trackers, and resolved entities into `kanban_tasks.json` + `ThoughtMap Intake.md`
+
+The generated intake board is also a lightweight curation surface:
+- delete a generated card to suppress that exact tracked thread on future reruns
+- rename a generated card to persist the corrected display title on future reruns
+- leave the hidden `%%tm:id=...%%` marker in place so ThoughtMap can match your edits back to the generated card
+
+ThoughtMap persists that curation state in `kanban_curation.json` and reuses it during subsequent reruns.
+Those overrides feed back into both Kanban generation and entity generation, so corrected names can propagate into `_entity-index.md`, `entities.json`, and the per-entity notes under `thoughtmap-out/entities/`.
+
+All layers share the same embedding space and depend on `config.py` thresholds. The pipeline is deterministic except for Ollama LLM responses.
+
 ## Output
 
 Results land in `Second Brain/Operations/thoughtmap-out/`:
@@ -59,8 +80,20 @@ Results land in `Second Brain/Operations/thoughtmap-out/`:
 | `REPORT.md` | Cluster summary, god nodes, source/category breakdown |
 | `chunks.json` | All chunks with metadata for downstream use |
 | `clusters.json` | Cluster definitions with labels and representative texts |
+| `kanban_tasks.json` | Generated Kanban candidate cards with columns, priorities, entities, and optional Tavily research queries |
+| `kanban_curation.json` | Machine-managed suppressions and title/entity overrides harvested from manual edits in `ThoughtMap Intake.md` |
 
 `thoughtmap.html` is the UI. Once it has been generated, you do not need Docker just to view it again.
+
+ThoughtMap also writes a markdown-backed Obsidian Kanban intake board to:
+
+`Second Brain/Operations/Kanban/ThoughtMap Intake.md`
+
+Treat this board as generated intake for triage, not the manual source of truth for daily execution.
+It is still allowed to edit it manually:
+- deleting a card suppresses that tracked thread on future reruns
+- renaming a card preserves your corrected title and can seed future entity alias matching
+- those same renames can also update future generated entity notes and index entries
 
 ## Viewing The UI
 

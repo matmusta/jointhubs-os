@@ -92,11 +92,11 @@ def label_clusters(
     embeddings_hd: np.ndarray,
     cluster_labels: np.ndarray,
 ) -> list[ClusterInfo]:
-    """Label each cluster using the chunks nearest to its centroid (TF-IDF weighted)."""
+    """Label each cluster using the chunks nearest to its centroid (top words)."""
     unique_labels = set(cluster_labels)
     unique_labels.discard(-1)  # Remove noise label
 
-    # First pass: gather representative texts per cluster for TF-IDF
+    # First pass: gather representative texts per cluster
     cluster_rep_texts: dict[int, list[str]] = {}
     cluster_data: dict[int, tuple] = {}
     for cid in sorted(unique_labels):
@@ -113,7 +113,7 @@ def label_clusters(
 
     all_cluster_texts = list(cluster_rep_texts.values())
 
-    # Second pass: create ClusterInfo with TF-IDF labels
+    # Second pass: create ClusterInfo with top-word labels
     clusters: list[ClusterInfo] = []
     for cid in sorted(cluster_data.keys()):
         indices, centroid_hd, representative_texts = cluster_data[cid]
@@ -132,14 +132,13 @@ def label_clusters(
 
 
 def _extract_topic_label(texts: list[str], all_cluster_texts: list[list[str]] | None = None, max_words: int = 3) -> str:
-    """Extract a topic label using TF-IDF-style weighting.
+    """Extract a topic label from most frequent words after stopword removal.
 
-    If all_cluster_texts is provided, words that appear in many clusters
-    get penalized (IDF), promoting distinctive terms.
+    The `all_cluster_texts` parameter is kept for backwards compatibility,
+    but this strategy intentionally does not use cross-cluster TF-IDF.
     """
     from collections import Counter
     import re
-    import math
 
     # Stopwords for en/pl — expanded set
     stopwords = {
@@ -183,29 +182,9 @@ def _extract_topic_label(texts: list[str], all_cluster_texts: list[list[str]] | 
         return "Misc"
 
     tf = Counter(words)
+    top = tf.most_common(max_words)
 
-    # IDF weighting if we have other clusters to compare against
-    if all_cluster_texts and len(all_cluster_texts) > 1:
-        n_clusters = len(all_cluster_texts)
-        doc_freq: Counter = Counter()
-        for cluster_texts in all_cluster_texts:
-            cluster_words = set()
-            for t in cluster_texts:
-                cluster_words.update(tokenize(t))
-            for w in cluster_words:
-                doc_freq[w] += 1
-
-        # TF-IDF score
-        scored = {}
-        for word, count in tf.items():
-            idf = math.log(n_clusters / max(doc_freq.get(word, 1), 1))
-            scored[word] = count * (1 + idf)
-
-        top = sorted(scored.items(), key=lambda x: x[1], reverse=True)
-    else:
-        top = tf.most_common(max_words * 2)
-
-    result = [word.capitalize() for word, _ in top[:max_words]]
+    result = [word.capitalize() for word, _ in top]
     return " / ".join(result) if result else "Misc"
 
 
@@ -415,3 +394,90 @@ def cluster_all(
         bridge_items=bridges,
         noise_count=noise_count,
     )
+
+
+def compute_sub_clusters(
+    member_indices: list[int],
+    all_embeddings_hd: list[list[float]],
+    items: list[dict],
+    min_total: int = 15,
+    min_sub_size: int = 3,
+) -> list[dict]:
+    """Compute sub-clusters within a single cluster.
+
+    Sub-clusters are computed once on ALL thoughts (no time-filtering) so
+    the structure is stable. Time-filtering only affects the visible count.
+
+    Returns:
+        List of {sub_id, label, member_offsets, size, density} or []
+        if the cluster is too small or produces no meaningful sub-structure.
+        member_offsets = local positions (0-based) within member_indices list.
+    """
+    if len(member_indices) < min_total:
+        return []
+
+    embs = np.array([all_embeddings_hd[i] for i in member_indices])
+    n = len(embs)
+
+    # UMAP to intermediate dims
+    n_components = min(10, n - 2)
+    n_neighbors = min(10, n - 1)
+    try:
+        reducer = umap.UMAP(
+            n_neighbors=n_neighbors,
+            min_dist=0.0,
+            n_components=n_components,
+            metric="cosine",
+            random_state=42,
+        )
+        reduced = reducer.fit_transform(embs)
+    except Exception:
+        return []
+
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=min_sub_size,
+        min_samples=2,
+        metric="euclidean",
+        cluster_selection_method="eom",
+    )
+    labels = clusterer.fit_predict(reduced)
+
+    unique_labels = set(labels)
+    unique_labels.discard(-1)
+    if len(unique_labels) < 2:
+        return []  # No meaningful sub-structure
+
+    # Gather texts per sub-cluster for top-word labeling
+    sub_texts: dict[int, list[str]] = {}
+    sub_data: dict[int, tuple] = {}
+
+    for sid in sorted(unique_labels):
+        local_idxs = [j for j, lv in enumerate(labels) if lv == sid]
+        global_idxs = [member_indices[j] for j in local_idxs]
+        sub_embs = embs[local_idxs]
+        centroid = sub_embs.mean(axis=0)
+        dists = np.linalg.norm(sub_embs - centroid, axis=1)
+        nearest = np.argsort(dists)[:5]
+        rep_texts = [items[global_idxs[j]].get("text", "")[:200] for j in nearest]
+        sub_texts[sid] = rep_texts
+        mean_dist = float(dists.mean())
+        sub_data[sid] = (local_idxs, mean_dist, rep_texts)
+
+    all_texts_list = list(sub_texts.values())
+    result = []
+    new_id = 0
+    for sid in sorted(sub_data.keys()):
+        local_idxs, mean_dist, rep_texts = sub_data[sid]
+        label = _extract_topic_label(rep_texts, all_cluster_texts=all_texts_list, max_words=3)
+        n_sub = len(local_idxs)
+        density = round(n_sub / (1.0 + mean_dist), 2)
+        result.append({
+            "sub_id": new_id,
+            "label": label,
+            "member_offsets": local_idxs,
+            "size": n_sub,
+            "density": density,
+        })
+        new_id += 1
+
+    return result

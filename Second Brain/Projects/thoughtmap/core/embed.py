@@ -7,6 +7,7 @@ import json
 import re
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import chromadb
@@ -88,6 +89,19 @@ def _candidate_embedding_texts(text: str) -> list[str]:
     return candidates
 
 
+def _fit_embedding_dimensions(embedding: list[float]) -> list[float]:
+    """Fit Ollama embeddings to the configured collection dimension."""
+    target_dimensions = config.EMBEDDING_DIMENSIONS
+    if target_dimensions <= 0 or len(embedding) <= target_dimensions:
+        return embedding
+
+    fitted = embedding[:target_dimensions]
+    norm = sum(value * value for value in fitted) ** 0.5
+    if norm == 0:
+        return fitted
+    return [value / norm for value in fitted]
+
+
 def _post_ollama_embed(batch: list[str], timeout: int) -> list[list[float]]:
     """Send one embedding request and validate the response shape."""
     resp = requests.post(
@@ -103,7 +117,7 @@ def _post_ollama_embed(batch: list[str], timeout: int) -> list[list[float]]:
         raise RuntimeError(
             f"Unexpected Ollama embed response for {config.OLLAMA_EMBEDDING_MODEL}: {body}"
         )
-    return embeddings
+    return [_fit_embedding_dimensions(embedding) for embedding in embeddings]
 
 
 def _embed_ollama_single(text: str, index: int) -> list[float]:
@@ -144,12 +158,50 @@ def _embed_ollama_single(text: str, index: int) -> list[float]:
     ) from last_error
 
 
-def _embed_ollama(texts: list[str], batch_size: int = 1) -> list[list[float]]:
-    """Embed via Ollama local API (one at a time to respect context limits)."""
-    all_embs: list[list[float]] = []
-    for index, text in enumerate(texts):
-        all_embs.append(_embed_ollama_single(text, index))
-    return all_embs
+def _embed_ollama(texts: list[str], batch_size: int | None = None) -> list[list[float]]:
+    """Embed via Ollama local API in parallel small batches, with single-item fallback."""
+    effective_batch_size = max(1, batch_size or config.OLLAMA_EMBED_BATCH_SIZE)
+    concurrency = max(1, config.OLLAMA_EMBED_CONCURRENCY)
+    batches = [
+        (start, texts[start:start + effective_batch_size])
+        for start in range(0, len(texts), effective_batch_size)
+    ]
+
+    def embed_one_batch(start: int, batch: list[str]) -> tuple[int, list[list[float]]]:
+        try:
+            return start, _post_ollama_embed(batch, timeout=_OLLAMA_EMBED_TIMEOUT_SECONDS)
+        except Exception as exc:
+            print(
+                f"  Warning: Ollama batch embedding failed at {start}-{start + len(batch) - 1}; "
+                f"falling back to single-item retries ({exc})"
+            )
+            fallback_embeddings = [
+                _embed_ollama_single(text, start + offset)
+                for offset, text in enumerate(batch)
+            ]
+            return start, fallback_embeddings
+
+    if concurrency == 1 or len(batches) <= 1:
+        return [
+            embedding
+            for start, batch in batches
+            for embedding in embed_one_batch(start, batch)[1]
+        ]
+
+    completed: dict[int, list[list[float]]] = {}
+    with ThreadPoolExecutor(max_workers=min(concurrency, len(batches))) as executor:
+        futures = [
+            executor.submit(embed_one_batch, start, batch)
+            for start, batch in batches
+        ]
+        for future in as_completed(futures):
+            start, embeddings = future.result()
+            completed[start] = embeddings
+
+    all_embeddings: list[list[float]] = []
+    for start, _batch in batches:
+        all_embeddings.extend(completed[start])
+    return all_embeddings
 
 
 def _embed_openai(texts: list[str], batch_size: int = 100) -> list[list[float]]:
@@ -235,6 +287,8 @@ def get_or_create_collection(client: chromadb.ClientAPI) -> chromadb.Collection:
 
 def chunk_id(chunk: Chunk) -> str:
     """Deterministic ID for a chunk (for dedup in ChromaDB)."""
+    if chunk.record_id:
+        return chunk.record_id
     content = f"{chunk.segment_id}:{chunk.chunk_index}:{chunk.text[:100]}"
     return hashlib.sha256(content.encode()).hexdigest()[:24]
 
@@ -261,6 +315,16 @@ def chunk_metadata(chunk: Chunk) -> dict:
         meta["wispr_app"] = chunk.wispr_app
     if chunk.timestamp_end:
         meta["timestamp_end"] = chunk.timestamp_end
+    if chunk.atom_id:
+        meta["atom_id"] = chunk.atom_id
+    if chunk.parent_segment_id:
+        meta["parent_segment_id"] = chunk.parent_segment_id
+    if chunk.signal_type:
+        meta["signal_type"] = chunk.signal_type
+    if chunk.quality:
+        meta["quality"] = chunk.quality
+    if chunk.confidence is not None:
+        meta["confidence"] = float(chunk.confidence)
     return meta
 
 
@@ -306,19 +370,65 @@ def store_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> int:
     return len(new_ids)
 
 
-def load_all_embeddings() -> tuple[list[dict], list[list[float]]]:
-    """Load all chunks and embeddings from ChromaDB for clustering."""
-    client = get_chroma_client()
-    collection = get_or_create_collection(client)
-    result = collection.get(include=["documents", "metadatas", "embeddings"])
-
-    items = []
-    for i, id_ in enumerate(result["ids"]):
+def _append_loaded_batch(
+    result: dict,
+    items: list[dict],
+    embeddings: list[list[float]],
+) -> None:
+    """Normalize one ChromaDB batch into clustering payloads."""
+    for i, id_ in enumerate(result.get("ids", [])):
         item = {
             "id": id_,
             "text": result["documents"][i],
             **result["metadatas"][i],
         }
         items.append(item)
+        embeddings.append(result["embeddings"][i])
 
-    return items, result["embeddings"]
+
+def load_all_embeddings(
+    ids: list[str] | None = None,
+    batch_size: int = 5000,
+) -> tuple[list[dict], list[list[float]]]:
+    """Load chunks and embeddings from ChromaDB for clustering."""
+    client = get_chroma_client()
+    collection = get_or_create_collection(client)
+
+    items: list[dict] = []
+    embeddings: list[list[float]] = []
+
+    if ids is not None:
+        requested_ids = set(ids)
+        total = collection.count()
+        for offset in range(0, total, batch_size):
+            result = collection.get(
+                include=["documents", "metadatas", "embeddings"],
+                limit=batch_size,
+                offset=offset,
+            )
+            matching_indexes = [
+                i for i, id_ in enumerate(result.get("ids", []))
+                if id_ in requested_ids
+            ]
+            if not matching_indexes:
+                continue
+
+            filtered_result = {
+                "ids": [result["ids"][i] for i in matching_indexes],
+                "documents": [result["documents"][i] for i in matching_indexes],
+                "metadatas": [result["metadatas"][i] for i in matching_indexes],
+                "embeddings": [result["embeddings"][i] for i in matching_indexes],
+            }
+            _append_loaded_batch(filtered_result, items, embeddings)
+        return items, embeddings
+
+    total = collection.count()
+    for offset in range(0, total, batch_size):
+        result = collection.get(
+            include=["documents", "metadatas", "embeddings"],
+            limit=batch_size,
+            offset=offset,
+        )
+        _append_loaded_batch(result, items, embeddings)
+
+    return items, embeddings

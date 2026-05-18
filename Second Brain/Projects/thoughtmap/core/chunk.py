@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from thoughtmap.core.extract import TextSegment
+from thoughtmap.core.models import TextSegment, ThoughtAtom
 
 
 @dataclass
@@ -25,6 +25,12 @@ class Chunk:
     wispr_app: str | None
     chunk_index: int         # position within the parent segment
     segment_id: str          # hash of original segment for dedup
+    record_id: str | None = None
+    atom_id: str | None = None
+    parent_segment_id: str | None = None
+    signal_type: str | None = None
+    quality: str | None = None
+    confidence: float | None = None
 
 
 # ─── Text cleanup ───
@@ -177,6 +183,50 @@ def chunk_all(segments: list[TextSegment], target_tokens: int = 200,
             min_tokens=min_tokens or config.CHUNK_MIN_TOKENS,
             overlap_sentences=overlap_sentences or config.CHUNK_OVERLAP_SENTENCES,
         ))
+    return chunks
+
+
+def chunk_atom(atom: ThoughtAtom) -> Chunk | None:
+    """Convert a semantic ThoughtAtom into a single embedding-ready chunk.
+
+    Thought atoms are already the semantic unit, so production migration keeps a
+    one-to-one atom→record mapping instead of re-windowing them again.
+    """
+    cleaned = clean_text(atom.text)
+    if not cleaned or len(cleaned.split()) < 3:
+        return None
+
+    return Chunk(
+        text=cleaned,
+        token_estimate=estimate_tokens(cleaned),
+        timestamp_start=atom.timestamp or "",
+        timestamp_end=None,
+        source=atom.source,
+        source_file=atom.source_file,
+        section=atom.section,
+        project_tag=atom.project_tag,
+        language=atom.language,
+        intent=atom.intent,
+        category=atom.category,
+        wispr_app=atom.wispr_app,
+        chunk_index=0,
+        segment_id=atom.parent_segment_id,
+        record_id=f"atom:{atom.atom_id}",
+        atom_id=atom.atom_id,
+        parent_segment_id=atom.parent_segment_id,
+        signal_type=atom.signal_type,
+        quality=atom.quality,
+        confidence=atom.confidence,
+    )
+
+
+def chunk_atoms(atoms: list[ThoughtAtom]) -> list[Chunk]:
+    """Convert semantic ThoughtAtoms into embedding-ready chunks."""
+    chunks: list[Chunk] = []
+    for atom in atoms:
+        chunk = chunk_atom(atom)
+        if chunk is not None:
+            chunks.append(chunk)
     return chunks
 
 

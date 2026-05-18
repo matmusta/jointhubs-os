@@ -22,7 +22,7 @@ import numpy as np
 import requests
 
 import thoughtmap.config as config
-from thoughtmap.core.cluster import ClusterInfo, ThoughtMapResult
+from thoughtmap.core.cluster import ClusterInfo, ThoughtMapResult, compute_sub_clusters
 
 
 # ─── LLM summarization ───
@@ -594,14 +594,15 @@ _CONDENSED_HTML = """<!DOCTYPE html>
   #breadcrumb .crumb:hover { color: #aaaadf; }
   #breadcrumb .sep { color: #3a3a5e; }
   #breadcrumb .current { color: #e0e0e0; font-weight: 600; cursor: default; }
-  #topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  #topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+  #surface-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   #search-wrap { width: 240px; }
   #search { width: 100%; padding: 6px 10px; background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 6px; color: #e0e0e0; font-size: 13px; outline: none; }
   #search:focus { border-color: #4E79A7; }
   #main { display: flex; flex: 1; overflow: hidden; position: relative; }
   #graph { flex: 1; background: #0a0a14; position: relative; }
   #sidebar { width: 340px; border-left: 1px solid #2a2a4e; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
-  #info-panel { padding: 14px; border-bottom: 1px solid #2a2a4e; max-height: 35%; overflow-y: auto; }
+  #info-panel { padding: 14px; border-bottom: 1px solid #2a2a4e; max-height: 50%; overflow-y: auto; }
   #info-panel h3 { font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
   #info-content { font-size: 13px; line-height: 1.5; }
   #info-content .empty { color: #555; font-style: italic; }
@@ -683,8 +684,12 @@ _CONDENSED_HTML = """<!DOCTYPE html>
   #note-modal .nfeedback.err { color: #f85149; }
   .add-note-btn { background: #238636; border: none; color: #fff; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 8px; }
   .add-note-btn:hover { background: #2ea043; }
-  #chat-panel { border-top: 1px solid #2a2a4e; display: flex; flex-direction: column; flex-shrink: 0; max-height: 45%; }
-  #chat-panel h3 { font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 14px 6px; margin: 0; }
+  #chat-panel { position: absolute; top: 0; left: 0; bottom: 0; width: 420px; background: #161b22; border-right: 1px solid #2a2a4e; display: none; flex-direction: column; z-index: 20; box-shadow: 4px 0 16px rgba(0,0,0,0.4); }
+  #chat-panel.open { display: flex; }
+  #chat-panel .chat-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 6px; }
+  #chat-panel .chat-header h3 { font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
+  #chat-panel .chat-close { background: none; border: none; color: #888; font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
+  #chat-panel .chat-close:hover { color: #e0e0e0; }
   #chat-bar { display: flex; gap: 6px; padding: 0 14px 8px; }
   #chat-bar input { flex: 1; background: #0f0f1a; border: 1px solid #3a3a5e; color: #e0e0e0; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-family: inherit; outline: none; }
   #chat-bar input:focus { border-color: #4E79A7; }
@@ -695,12 +700,87 @@ _CONDENSED_HTML = """<!DOCTYPE html>
   .chat-mode-btns button { background: #1a1a2e; border: 1px solid #3a3a5e; color: #aaa; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
   .chat-mode-btns button.active { background: #4E79A7; border-color: #4E79A7; color: #fff; }
   #chat-results { flex: 1; overflow-y: auto; padding: 0 14px 10px; font-size: 12px; line-height: 1.5; }
-  .chat-result { background: #12121f; border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; border-left: 3px solid #4E79A7; }
-  .chat-result .cr-meta { color: #7a7aaf; font-size: 11px; margin-bottom: 4px; }
+  .chat-result { background: #12121f; border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; border-left: 3px solid #4E79A7; word-break: break-word; overflow-wrap: break-word; }
+  .chat-result .cr-meta { color: #7a7aaf; font-size: 11px; margin-bottom: 4px; word-break: break-all; }
   .chat-result .cr-score { float: right; color: #e5a00d; font-size: 11px; }
-  .chat-result .cr-text { color: #ccc; }
+  .chat-result .cr-text { color: #ccc; white-space: pre-wrap; word-break: break-word; }
   .chat-scope { color: #888; font-size: 11px; padding: 0 14px 4px; }
   .chat-empty { color: #555; font-style: italic; padding: 8px 0; }
+
+  .surface-trigger { background: #1a1a2e; color: #d7d7f0; border: 1px solid #3a3a5e; border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s; }
+  .surface-trigger:hover { border-color: #6a6aaf; color: #fff; }
+  .surface-trigger.active { background: #315a8b; border-color: #4E79A7; color: #fff; }
+  #graph.doc-surface { padding: 22px 24px 28px; overflow-y: auto; }
+  .doc-shell { max-width: 1120px; margin: 0 auto; }
+  .doc-intro { color: #a8afca; font-size: 14px; line-height: 1.65; max-width: 72ch; margin-bottom: 18px; }
+  .doc-section-label { color: #7a7aaf; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin: 18px 0 10px; }
+  .doc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .doc-grid.doc-grid-compact { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .doc-card { background: #12121f; border: 1px solid #252541; border-radius: 12px; padding: 14px 15px; cursor: pointer; transition: border-color 0.15s, transform 0.15s, background 0.15s; }
+  .doc-card:hover { border-color: #4E79A7; transform: translateY(-1px); background: #151528; }
+  .doc-kicker { color: #7a7aaf; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .doc-title { font-size: 15px; color: #f0f2ff; margin-bottom: 6px; }
+  .doc-meta { color: #8d95b8; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+  .doc-summary { color: #c9cee4; font-size: 13px; line-height: 1.6; }
+  .doc-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .doc-chip { display: inline-flex; align-items: center; gap: 4px; background: #1b1b2f; border: 1px solid #2d2d4a; border-radius: 999px; padding: 3px 8px; color: #c6ccef; font-size: 11px; }
+  .doc-empty { color: #666f92; font-size: 13px; font-style: italic; padding: 18px 0; }
+  .doc-columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr); gap: 18px; align-items: start; }
+  .tree-section { background: #10101d; border: 1px solid #252541; border-radius: 12px; padding: 12px 14px; }
+  .tree-branch { border-bottom: 1px solid #1e2036; padding: 8px 0; }
+  .tree-branch:last-child { border-bottom: 0; }
+  .tree-branch summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 8px; color: #eef1ff; font-size: 14px; }
+  .tree-branch summary::-webkit-details-marker { display: none; }
+  .tree-branch summary .count { color: #7a7aaf; font-size: 11px; }
+  .tree-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0 0 18px; padding: 8px 10px; border-radius: 8px; background: #141425; cursor: pointer; }
+  .tree-row:hover { background: #1a1a2e; }
+  .tree-row .label { color: #e0e3f4; font-size: 13px; }
+  .tree-row .meta { color: #7f87ab; font-size: 11px; }
+  .triple-group { margin-bottom: 16px; }
+  .triple-list { display: flex; flex-direction: column; gap: 8px; }
+  .triple-row { width: 100%; text-align: left; background: #12121f; border: 1px solid #252541; border-radius: 10px; padding: 12px 14px; cursor: pointer; color: #d8ddf0; }
+  .triple-row:hover { border-color: #4E79A7; background: #16162a; }
+  .triple-main { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; line-height: 1.55; }
+  .triple-predicate { color: #8fc3ff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .triple-meta { color: #70789d; font-size: 11px; margin-top: 6px; }
+  @media (max-width: 1100px) {
+    .doc-columns { grid-template-columns: 1fr; }
+  }
+  #echoes-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 90; }
+  #echoes-overlay.open { display: block; }
+  #echoes-panel { display: none; position: fixed; top: 0; right: 0; height: 100vh; width: 560px; max-width: 95vw; background: #0d0d18; border-left: 1px solid #2a2a4e; z-index: 100; box-shadow: -6px 0 24px rgba(0,0,0,0.5); flex-direction: column; }
+  #echoes-panel.open { display: flex; }
+  #echoes-header { padding: 14px 16px 8px; border-bottom: 1px solid #2a2a4e; display: flex; align-items: center; gap: 10px; }
+  #echoes-header h2 { margin: 0; font-size: 15px; color: #e0e0e0; text-transform: uppercase; letter-spacing: 0.05em; }
+  #echoes-header .echo-meta { color: #7a7aaf; font-size: 11px; margin-left: auto; }
+  #echoes-header .eclose { background: transparent; color: #aaa; border: 0; font-size: 22px; cursor: pointer; line-height: 1; }
+  #echoes-controls { padding: 10px 16px; border-bottom: 1px solid #2a2a4e; display: grid; grid-template-columns: auto auto auto 1fr; gap: 8px 12px; align-items: center; font-size: 12px; color: #aaa; }
+  #echoes-controls input[type=number] { width: 60px; background: #12121f; color: #e0e0e0; border: 1px solid #2a2a4e; border-radius: 4px; padding: 4px 6px; font-size: 12px; }
+  #echoes-controls .seg { display: inline-flex; border: 1px solid #2a2a4e; border-radius: 6px; overflow: hidden; }
+  #echoes-controls .seg button { background: #12121f; color: #aaa; border: 0; padding: 4px 8px; font-size: 11px; cursor: pointer; }
+  #echoes-controls .seg button.active { background: #4E79A7; color: #fff; }
+  #echoes-list { flex: 1; overflow-y: auto; padding: 8px 12px 20px; }
+  .echo-card { background: #12121f; border: 1px solid #2a2a4e; border-left: 3px solid #4a4a6e; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+  .echo-card.observe { border-left-color: #2aa36b; }
+  .echo-card.discard { border-left-color: #a13d3d; opacity: 0.65; }
+  .echo-card .echo-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .echo-card .echo-size { color: #e5a00d; font-weight: bold; }
+  .echo-card .echo-sim { color: #7a7aaf; font-size: 11px; }
+  .echo-card .echo-dates { color: #666; font-size: 11px; margin-left: auto; }
+  .echo-card .echo-rep { color: #ddd; font-size: 13px; margin-top: 6px; line-height: 1.45; word-break: break-word; }
+  .echo-card .echo-frags { margin-top: 6px; display: none; }
+  .echo-card.expanded .echo-frags { display: block; }
+  .echo-card .echo-frag { color: #aaa; font-size: 11px; padding: 4px 8px; border-left: 2px solid #2a2a4e; margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
+  .echo-card .echo-frag .fm { color: #666; font-size: 10px; }
+  .echo-card .echo-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .echo-card .echo-actions button { background: #1a1a2e; color: #bbb; border: 1px solid #2a2a4e; border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+  .echo-card .echo-actions button:hover { border-color: #6a6aaf; color: #fff; }
+  .echo-card .echo-actions button.active { background: #4E79A7; border-color: #4E79A7; color: #fff; }
+  .echo-card .echo-actions button.active.observe { background: #2aa36b; border-color: #2aa36b; }
+  .echo-card .echo-actions button.active.discard { background: #a13d3d; border-color: #a13d3d; }
+  .echo-card .echo-expand { margin-left: auto; background: transparent; color: #7a7aaf; border: 0; cursor: pointer; font-size: 11px; }
+  .echo-card textarea { width: 100%; margin-top: 6px; min-height: 40px; background: #0d0d18; color: #ddd; border: 1px solid #2a2a4e; border-radius: 4px; padding: 6px 8px; font-size: 12px; font-family: inherit; resize: vertical; }
+  #echoes-empty { color: #666; text-align: center; padding: 24px 12px; font-style: italic; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -709,6 +789,14 @@ _CONDENSED_HTML = """<!DOCTYPE html>
     <span class="current" id="bc-root">ThoughtMap</span>
   </div>
   <div id="topbar-actions">
+    <div id="surface-nav">
+      <button id="map-trigger" class="surface-trigger" type="button" onclick="navigateToSurface('map')">Map</button>
+      <button id="entities-trigger" class="surface-trigger" type="button" onclick="navigateToSurface('entities')" title="Combined entities, topics, and mega-topics graph">Entities</button>
+      <button id="glossary-trigger" class="surface-trigger" type="button" onclick="navigateToSurface('glossary')">Glossary</button>
+      <button id="taxonomy-trigger" class="surface-trigger" type="button" onclick="navigateToSurface('taxonomy')">Taxonomy</button>
+      <button id="echoes-trigger" class="surface-trigger" type="button" onclick="navigateToSurface('echoes')" title="Near-duplicate thought groups">Echoes</button>
+      <button id="query-trigger" class="surface-trigger" type="button" onclick="toggleChatPanel()" title="Open context search panel">Query</button>
+    </div>
     <div id="search-wrap">
       <input id="search" type="text" placeholder="Search..." autocomplete="off">
     </div>
@@ -752,7 +840,10 @@ _CONDENSED_HTML = """<!DOCTYPE html>
     <div id="stats"></div>
   </div>
   <div id="chat-panel">
-    <h3>Query</h3>
+    <div class="chat-header">
+      <h3>Query</h3>
+      <button class="chat-close" onclick="closeChatPanel()">&times;</button>
+    </div>
     <div class="chat-scope" id="chat-scope">Select a topic to query</div>
     <div class="chat-mode-btns">
       <button class="active" id="btn-mode-context" onclick="setChatMode('context')">Context Search</button>
@@ -772,6 +863,26 @@ _CONDENSED_HTML = """<!DOCTYPE html>
   <div class="etype" id="etype"></div>
   <div class="esummary" id="esummary"></div>
   <div id="edetails"></div>
+</div>
+<div id="echoes-overlay" onclick="closeEchoes()"></div>
+<div id="echoes-panel">
+  <div id="echoes-header">
+    <h2>Echoes</h2>
+    <span class="echo-meta" id="echoes-meta"></span>
+    <button class="eclose" onclick="closeEchoes()" title="Close">&times;</button>
+  </div>
+  <div id="echoes-controls">
+    <label>Min size <input id="echo-min-size" type="number" min="2" max="100" value="5" onchange="loadEchoes()"></label>
+    <label>Min sim <input id="echo-min-sim" type="number" min="0" max="1" step="0.01" value="0.95" onchange="loadEchoes()"></label>
+    <div class="seg" role="tablist" aria-label="Status filter">
+      <button data-es="all" class="active" onclick="setEchoStatusFilter('all')">All</button>
+      <button data-es="observe" onclick="setEchoStatusFilter('observe')">Observe</button>
+      <button data-es="discard" onclick="setEchoStatusFilter('discard')">Discard</button>
+      <button data-es="neutral" onclick="setEchoStatusFilter('neutral')">Neutral</button>
+    </div>
+    <span id="echoes-count" style="text-align:right; color:#7a7aaf; font-size:11px;"></span>
+  </div>
+  <div id="echoes-list"><div id="echoes-empty">Loading&hellip;</div></div>
 </div>
 <div id="note-overlay" onclick="closeCreateNote()"></div>
 <div id="note-modal">
@@ -793,6 +904,22 @@ const SUPER_CLUSTERS = __SUPER_CLUSTERS__;
 const EDGES = __EDGES__;
 const PALETTE = __PALETTE__;
 const ENTITIES = __ENTITIES__;
+const GLOSSARY = __GLOSSARY__;
+const TAXONOMY = __TAXONOMY__;
+const SURFACE_TO_PATH = {
+  map: '/',
+  entities: '/entities',
+  glossary: '/glossary',
+  taxonomy: '/taxonomy',
+  echoes: '/echoes',
+};
+const PATH_TO_SURFACE = {
+  '/': 'map',
+  '/entities': 'entities',
+  '/glossary': 'glossary',
+  '/taxonomy': 'taxonomy',
+  '/echoes': 'echoes',
+};
 
 // Time filtering state
 let filterFrom = null, filterTo = null;
@@ -942,16 +1069,25 @@ function applyTimeFilter() {
   // Clear thoughts cache so filtered thoughts load fresh
   thoughtsCache = {};
   // Re-render current level
-  if (currentLevel === 0) buildLevel0();
+  if (currentSurface === 'glossary') renderGlossaryView();
+  else if (currentSurface === 'taxonomy') renderTaxonomyView();
+  else if (currentSurface === 'entities') buildEntitiesView();
+  else if (currentLevel === 0) buildLevel0();
   else if (currentLevel === 1) buildLevel1(currentSuperId);
   else if (currentLevel === 2) drillIntoCluster(currentClusterId);
+  else if (currentLevel === 3) drillIntoSubCluster(currentClusterId, currentSubId);
 }
 
 let currentLevel = 0;
 let currentSuperId = null;
 let currentClusterId = null;
+let currentSubId = null;
 let network = null;
 let thoughtsCache = {};
+let entityGraphCache = null;
+let currentSurface = 'map';
+let currentSearchTerm = '';
+let selectedGlossarySlug = null;
 
 const clusterById = {};
 CLUSTERS.forEach(c => { clusterById[c.cluster_id] = c; });
@@ -965,10 +1101,86 @@ SUPER_CLUSTERS.forEach((sc, idx) => {
 
 function esc(s) { return s ? s.replace(/\x3c/g, '&lt;').replace(/>/g, '&gt;') : ''; }
 
+function entityNodeId(name) {
+  return 'es_e_' + encodeURIComponent(name || 'entity');
+}
+
+function topologyEntityNodeId(name, type) {
+  return 'entity:' + String((type || 'other') + '-' + (name || 'entity')).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function visibleClusterIds() {
+  return new Set(CLUSTERS.filter(clusterOverlaps).map(c => c.cluster_id));
+}
+
+function glossaryEntriesInRange() {
+  const visible = visibleClusterIds();
+  if (!filterFrom || !filterTo) return (GLOSSARY.entries || []).slice();
+  return (GLOSSARY.entries || []).filter(entry => {
+    const topics = entry.topics || [];
+    if (!topics.length) return false;
+    return topics.some(topic => visible.has(topic.cluster_id));
+  });
+}
+
+function glossaryConceptsInRange() {
+  const visible = visibleClusterIds();
+  if (!filterFrom || !filterTo) return (GLOSSARY.concepts || []).slice();
+  return (GLOSSARY.concepts || []).filter(concept => visible.has(concept.cluster_id));
+}
+
+function surfaceFromPath(pathname) {
+  return PATH_TO_SURFACE[pathname] || 'map';
+}
+
+function setSurfaceRoute(surface, replace) {
+  const target = SURFACE_TO_PATH[surface] || '/';
+  if (window.location.pathname === target) return;
+  if (replace) window.history.replaceState({}, '', target);
+  else window.history.pushState({}, '', target);
+}
+
+function navigateToSurface(surface, options = {}) {
+  const opts = { replace: false, fromHistory: false, ...options };
+  if (surface === 'entities') {
+    openEntitiesView({ skipRoute: opts.fromHistory, replace: opts.replace });
+    return;
+  }
+  if (surface === 'glossary') {
+    openGlossaryView({ skipRoute: opts.fromHistory, replace: opts.replace });
+    return;
+  }
+  if (surface === 'taxonomy') {
+    openTaxonomyView({ skipRoute: opts.fromHistory, replace: opts.replace });
+    return;
+  }
+  if (surface === 'echoes') {
+    openEchoes({ skipRoute: opts.fromHistory, replace: opts.replace });
+    return;
+  }
+  goToLevel0({ skipRoute: opts.fromHistory, replace: opts.replace });
+}
+
+function syncSurfaceButtons() {
+  Object.keys(SURFACE_TO_PATH).forEach(surface => {
+    const button = document.getElementById(surface + '-trigger');
+    if (!button) return;
+    button.classList.toggle('active', currentSurface === surface);
+  });
+}
+
 function updateBreadcrumb() {
   const bc = document.getElementById('breadcrumb');
   let html = '';
-  if (currentLevel === 0) {
+  if (currentSurface === 'glossary') {
+    html = '<span class="crumb" onclick="navigateToSurface(\\'map\\')">ThoughtMap</span><span class="sep"> › </span><span class="current">Glossary</span>';
+  } else if (currentSurface === 'taxonomy') {
+    html = '<span class="crumb" onclick="navigateToSurface(\\'map\\')">ThoughtMap</span><span class="sep"> › </span><span class="current">Taxonomy</span>';
+  } else if (currentSurface === 'echoes') {
+    html = '<span class="crumb" onclick="navigateToSurface(\\'map\\')">ThoughtMap</span><span class="sep"> › </span><span class="current">Echoes</span>';
+  } else if (currentSurface === 'entities') {
+    html = '<span class="crumb" onclick="navigateToSurface(\\'map\\')">ThoughtMap</span><span class="sep"> › </span><span class="current">Entities Graph</span>';
+  } else if (currentLevel === 0) {
     html = '<span class="current">ThoughtMap</span>';
   } else if (currentLevel === 1) {
     const sc = superById[currentSuperId];
@@ -979,13 +1191,531 @@ function updateBreadcrumb() {
     html = '<span class="crumb" onclick="goToLevel0()">ThoughtMap</span><span class="sep"> \u203a </span>';
     if (sc) html += '<span class="crumb" onclick="drillIntoSuper(' + sc.super_id + ')">' + esc(sc.label) + '</span><span class="sep"> \u203a </span>';
     html += '<span class="current">' + esc(cl.label) + '</span>';
+  } else if (currentLevel === 3) {
+    const sc = clusterToSuper[currentClusterId];
+    const cl = clusterById[currentClusterId];
+    const sub = cl.sub_clusters && cl.sub_clusters.find(s => s.sub_id === currentSubId);
+    html = '<span class="crumb" onclick="goToLevel0()">ThoughtMap</span><span class="sep"> \u203a </span>';
+    if (sc) html += '<span class="crumb" onclick="drillIntoSuper(' + sc.super_id + ')">' + esc(sc.label) + '</span><span class="sep"> \u203a </span>';
+    html += '<span class="crumb" onclick="drillIntoCluster(' + currentClusterId + ')">' + esc(cl.label) + '</span><span class="sep"> \u203a </span>';
+    html += '<span class="current">' + esc(sub ? sub.label : 'Thoughts') + '</span>';
   }
   bc.innerHTML = html;
 }
 
-function goToLevel0() {
-  currentLevel = 0; currentSuperId = null; currentClusterId = null;
+function goToLevel0(options = {}) {
+  currentSurface = 'map';
+  currentLevel = 0; currentSuperId = null; currentClusterId = null; currentSubId = null;
+  if (!options.skipRoute) setSurfaceRoute('map', !!options.replace);
+  closeEchoes(true);
+  syncSurfaceButtons();
   updateBreadcrumb(); buildLevel0();
+}
+
+function openEntitiesView(options = {}) {
+  currentSurface = 'entities';
+  currentLevel = 4;
+  currentSuperId = null;
+  currentClusterId = null;
+  currentSubId = null;
+  if (!options.skipRoute) setSurfaceRoute('entities', !!options.replace);
+  closeEchoes(true);
+  closeChatPanel();
+  syncSurfaceButtons();
+  updateBreadcrumb();
+  buildEntitiesView();
+}
+
+function openGlossaryView(options = {}) {
+  currentSurface = 'glossary';
+  currentLevel = 0;
+  if (!options.skipRoute) setSurfaceRoute('glossary', !!options.replace);
+  closeEchoes(true);
+  closeChatPanel();
+  syncSurfaceButtons();
+  updateBreadcrumb();
+  renderGlossaryView();
+}
+
+function openTaxonomyView(options = {}) {
+  currentSurface = 'taxonomy';
+  currentLevel = 0;
+  if (!options.skipRoute) setSurfaceRoute('taxonomy', !!options.replace);
+  closeEchoes(true);
+  closeChatPanel();
+  syncSurfaceButtons();
+  updateBreadcrumb();
+  renderTaxonomyView();
+}
+
+function entityTypeColor(type) {
+  if (type === 'person') return '#3fb950';
+  if (type === 'organization') return '#58a6ff';
+  if (type === 'project') return '#b392f0';
+  if (type === 'tool') return '#e3b341';
+  if (type === 'location') return '#ff7b72';
+  return '#8b949e';
+}
+
+function overlapScore(a, b) {
+  const setA = new Set(a || []);
+  const setB = new Set(b || []);
+  if (!setA.size && !setB.size) return 0;
+  let inter = 0;
+  setA.forEach(v => { if (setB.has(v)) inter++; });
+  const union = new Set([...(a || []), ...(b || [])]).size;
+  return union ? inter / union : 0;
+}
+
+function buildEntitiesView() {
+  const visibleClusters = CLUSTERS.filter(clusterOverlaps);
+  const clusterSet = new Set(visibleClusters.map(c => c.cluster_id));
+
+  const entities = ENTITIES
+    .filter(e => (e.cluster_ids || []).some(cid => clusterSet.has(cid)))
+    .sort((a, b) => (b.mention_count || 0) - (a.mention_count || 0))
+    .slice(0, 120);
+
+  const nodes = [];
+  const edges = [];
+  let eid = 0;
+
+  entities.forEach(e => {
+    const mentions = e.mention_count || 1;
+    const color = entityTypeColor(e.type || 'other');
+    const eidNode = entityNodeId(e.name);
+    nodes.push({
+      id: eidNode,
+      label: e.name + '\\n(' + mentions + ')',
+      color: { background: color + 'cc', border: color },
+      shape: 'dot',
+      size: Math.max(10, Math.min(28, 8 + Math.log2(mentions + 1) * 3)),
+      font: { size: 10, color: '#f0f0f0', strokeWidth: 1, strokeColor: '#000' },
+      borderWidth: 1,
+      _type: 'entity',
+      _data: e,
+    });
+  });
+
+  for (let i = 0; i < entities.length; i++) {
+    for (let j = i + 1; j < entities.length; j++) {
+      const a = entities[i];
+      const b = entities[j];
+      const clusterJ = overlapScore(a.cluster_ids || [], b.cluster_ids || []);
+      const sourceJ = overlapScore(a.source_files || [], b.source_files || []);
+      const score = (0.75 * clusterJ) + (0.25 * sourceJ);
+      if (score < 0.34) continue;
+      edges.push({
+        id: 'ee_' + (eid++),
+        from: entityNodeId(a.name),
+        to: entityNodeId(b.name),
+        color: { color: '#9aa3c7', opacity: Math.min(0.65, 0.18 + score * 0.7) },
+        width: 0.8 + score * 2.4,
+        smooth: { type: 'continuous' },
+      });
+    }
+  }
+
+  entityGraphCache = { entities, visibleClusters, edgesCount: edges.length };
+  renderNetwork(nodes, edges, { gravity: -115, spring: 170, central: 0.006, overlap: 0.9 });
+  buildLegendEntities(entities);
+  document.getElementById('legend-title').textContent = 'Entities Graph';
+  document.getElementById('info-content').innerHTML = '<div class="field"><b>Entities view</b></div><div class="field">Entity-only graph</div><div class="field" style="font-size:11px;color:#7a7aaf;">Click a node to inspect. Double-click an entity for full detail.</div>';
+  updateStats(entities.length + ' entities · ' + edges.length + ' links');
+}
+
+function renderDocumentSurface(innerHtml) {
+  const container = document.getElementById('graph');
+  if (network) {
+    network.destroy();
+    network = null;
+  }
+  container.classList.add('doc-surface');
+  container.innerHTML = innerHtml;
+}
+
+function matchesSearch(parts) {
+  if (!currentSearchTerm) return true;
+  return parts.some(part => (part || '').toLowerCase().includes(currentSearchTerm));
+}
+
+function showOverviewInfo(title, detail, helper) {
+  let html = '<div class="field"><b>' + esc(title) + '</b></div>';
+  if (detail) html += '<div class="summary">' + esc(detail) + '</div>';
+  if (helper) html += '<div class="field" style="font-size:11px;color:#7a7aaf;">' + esc(helper) + '</div>';
+  document.getElementById('info-content').innerHTML = html;
+}
+
+function renderGlossaryView() {
+  const entries = glossaryEntriesInRange().filter(entry => matchesSearch([
+    entry.name,
+    entry.summary,
+    entry.type,
+    ...(entry.aliases || []),
+  ]));
+  const concepts = glossaryConceptsInRange().filter(concept => matchesSearch([
+    concept.name,
+    concept.summary,
+  ]));
+  let html = '<div class="doc-shell">';
+  html += '<div class="doc-intro">Canonical terms from the current run: named entities first, then topic labels. The cards stay compact so the view reads like an index, not a report.</div>';
+  if (entries.length) {
+    html += '<div class="doc-grid">';
+    entries.slice(0, 160).forEach(entry => {
+      html += '<article class="doc-card" onclick="showGlossaryEntry(\\'' + entry.slug.replace(/'/g, "\\'") + '\\')">';
+      html += '<div class="doc-kicker">' + esc(entry.type) + '</div>';
+      html += '<div class="doc-title">' + esc(entry.name) + '</div>';
+      html += '<div class="doc-meta">' + entry.mention_count + ' mentions · ' + entry.topic_count + ' topics</div>';
+      if (entry.summary) html += '<div class="doc-summary">' + esc(entry.summary) + '</div>';
+      if (entry.aliases && entry.aliases.length) {
+        html += '<div class="doc-chip-row">' + entry.aliases.slice(0, 3).map(alias => '<span class="doc-chip">' + esc(alias) + '</span>').join('') + '</div>';
+      }
+      html += '</article>';
+    });
+    html += '</div>';
+  } else {
+    html += '<div class="doc-empty">No glossary entries match the current search and time filter.</div>';
+  }
+  if (concepts.length) {
+    html += '<div class="doc-section-label">Topic labels</div><div class="doc-grid doc-grid-compact">';
+    concepts.slice(0, 60).forEach(concept => {
+      html += '<article class="doc-card" onclick="openClusterFromSurface(' + concept.cluster_id + ')">';
+      html += '<div class="doc-kicker">Topic</div>';
+      html += '<div class="doc-title">' + esc(concept.name) + '</div>';
+      html += '<div class="doc-meta">' + concept.mention_count + ' thoughts</div>';
+      if (concept.summary) html += '<div class="doc-summary">' + esc(concept.summary) + '</div>';
+      html += '</article>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  renderDocumentSurface(html);
+  buildLegendGlossary();
+  if (selectedGlossarySlug) showGlossaryEntry(selectedGlossarySlug);
+  else showOverviewInfo('Glossary', 'Open a card to inspect aliases, boundaries, and linked topics.', 'Click a topic label to jump back into the map.');
+  updateStats(entries.length + ' terms · ' + concepts.length + ' topic labels');
+}
+
+function showGlossaryEntry(slug) {
+  const entry = (GLOSSARY.entries || []).find(item => item.slug === slug);
+  if (!entry) return;
+  selectedGlossarySlug = slug;
+  let html = '<div class="field"><b>' + esc(entry.name) + '</b></div>';
+  html += '<div class="field"><span class="mega-badge">' + esc(entry.type) + ' · ' + entry.mention_count + ' mentions</span></div>';
+  if (entry.summary) html += '<div class="summary">' + esc(entry.summary) + '</div>';
+  if (entry.aliases && entry.aliases.length) html += '<div class="field"><b>Aliases:</b> ' + entry.aliases.map(alias => esc(alias)).join(', ') + '</div>';
+  if (entry.detail) html += '<div class="field"><b>Boundaries:</b><br>' + esc(entry.detail) + '</div>';
+  if (entry.topics && entry.topics.length) {
+    html += '<div style="margin-top:8px"><b>Topics:</b></div>';
+    entry.topics.slice(0, 10).forEach(topic => {
+      html += '<span class="related-item" onclick="openClusterFromSurface(' + topic.cluster_id + ')">' + esc(topic.label) + ' (' + topic.mentions + ')</span> ';
+    });
+  }
+  document.getElementById('info-content').innerHTML = html;
+}
+
+function renderTaxonomyView() {
+  const topicTree = (TAXONOMY.topic_tree || []).filter(root => {
+    if (matchesSearch([root.label, root.summary])) return true;
+    return (root.children || []).some(child => matchesSearch([child.label, child.summary]));
+  });
+  const entityTree = (TAXONOMY.entity_tree || []).filter(root => {
+    if (matchesSearch([root.label])) return true;
+    return (root.children || []).some(branch => {
+      if (matchesSearch([branch.label])) return true;
+      return (branch.children || []).some(child => matchesSearch([child.label, child.summary]));
+    });
+  });
+  let html = '<div class="doc-shell">';
+  html += '<div class="doc-intro">Two parallel hierarchies: topics grouped under mega-topics, and entities grouped by type and breadth. Use it when you want structure first and graph second.</div>';
+  html += '<div class="doc-columns">';
+  html += '<section class="tree-section"><div class="doc-section-label">Topics</div>';
+  topicTree.forEach(root => {
+    html += '<details class="tree-branch" open>';
+    html += '<summary><span>' + esc(root.label) + '</span><span class="count">' + root.count + ' thoughts</span></summary>';
+    (root.children || []).forEach(child => {
+      html += '<div class="tree-row" onclick="openClusterFromSurface(' + child.cluster_id + ')"><span class="label">' + esc(child.label) + '</span><span class="meta">' + child.count + ' thoughts</span></div>';
+    });
+    html += '</details>';
+  });
+  html += '</section>';
+  html += '<section class="tree-section"><div class="doc-section-label">Entities</div>';
+  entityTree.forEach(root => {
+    html += '<details class="tree-branch" open>';
+    html += '<summary><span>' + esc(root.label) + '</span><span class="count">' + root.count + ' terms</span></summary>';
+    (root.children || []).forEach(branch => {
+      html += '<details class="tree-branch" open><summary><span>' + esc(branch.label) + '</span><span class="count">' + branch.count + '</span></summary>';
+      (branch.children || []).forEach(child => {
+        html += '<div class="tree-row" onclick="openEntityFromSurface(\\'' + child.slug.replace(/'/g, "\\'") + '\\')"><span class="label">' + esc(child.label) + '</span><span class="meta">' + child.topic_count + ' topics</span></div>';
+      });
+      html += '</details>';
+    });
+    html += '</details>';
+  });
+  html += '</section></div></div>';
+  renderDocumentSurface(html);
+  buildLegendTaxonomy(topicTree, entityTree);
+  showOverviewInfo('Taxonomy', 'Browse topic branches on the left and entity branches on the right.', 'Topic rows jump into the map. Entity rows open the entity detail.');
+  updateStats(topicTree.length + ' topic roots · ' + entityTree.length + ' entity roots');
+}
+
+function buildTopologyView() {
+  const visibleClusters = visibleClusterIds();
+  const visibleSuperIds = new Set(SUPER_CLUSTERS.filter(superOverlaps).map(sc => sc.super_id));
+  const entityLinks = (TOPOLOGY.edges || []).filter(edge => edge.relation === 'appears_in' && visibleClusters.has(parseInt(String(edge.target).split(':')[1], 10)));
+  const entityNodeIds = new Set(entityLinks.map(edge => edge.source));
+  const clusterNodes = (TOPOLOGY.nodes || []).filter(node => node.kind === 'cluster' && visibleClusters.has(parseInt(String(node.id).split(':')[1], 10)));
+  const superNodes = (TOPOLOGY.nodes || []).filter(node => node.kind === 'super_cluster' && visibleSuperIds.has(parseInt(String(node.id).split(':')[1], 10)));
+  const entityNodes = (TOPOLOGY.nodes || []).filter(node => node.kind === 'entity' && entityNodeIds.has(node.id)).sort((a, b) => (b.size || 0) - (a.size || 0)).slice(0, 160);
+  const allowed = new Set([...clusterNodes, ...superNodes, ...entityNodes].map(node => node.id));
+  const edges = (TOPOLOGY.edges || []).filter(edge => allowed.has(edge.source) && allowed.has(edge.target));
+  const nodes = [...superNodes, ...clusterNodes, ...entityNodes].map(node => {
+    if (node.kind === 'super_cluster') {
+      return {
+        id: node.id,
+        label: node.label + '\\n(' + (node.size || 0) + ')',
+        color: { background: '#7b61c8', border: '#bba8ff' },
+        size: Math.max(24, Math.min(56, Math.sqrt(node.size || 1) * 2.4)),
+        shape: 'diamond',
+        font: { size: 16, color: '#fff', strokeWidth: 3, strokeColor: '#000' },
+        borderWidth: 2,
+        _type: 'super',
+        _data: superById[parseInt(String(node.id).split(':')[1], 10)],
+      };
+    }
+    if (node.kind === 'cluster') {
+      const clusterId = parseInt(String(node.id).split(':')[1], 10);
+      return {
+        id: node.id,
+        label: node.label + '\\n(' + (node.size || 0) + ')',
+        color: { background: '#2e6ca5', border: '#7db8ef' },
+        size: Math.max(16, Math.min(42, Math.sqrt(node.size || 1) * 2.0)),
+        shape: 'dot',
+        font: { size: 12, color: '#f4f7ff', strokeWidth: 2, strokeColor: '#000' },
+        borderWidth: 2,
+        _type: 'cluster',
+        _data: clusterById[clusterId],
+      };
+    }
+    const entityData = ENTITIES.find(item => topologyEntityNodeId(item.name, item.type) === node.id)
+      || ENTITIES.find(item => item.name === (node.entity_name || node.label) && (item.type || 'other') === (node.entity_type || 'other'))
+      || { name: node.entity_name || node.label, type: node.entity_type || 'other', summary: node.summary || '', mention_count: node.size || 0, cluster_ids: [] };
+    return {
+      id: node.id,
+      label: node.label + '\\n(' + (node.size || 0) + ')',
+      color: { background: entityTypeColor(node.entity_type || 'other') + 'cc', border: entityTypeColor(node.entity_type || 'other') },
+      size: Math.max(10, Math.min(30, 8 + Math.log2((node.size || 1) + 1) * 3)),
+      shape: 'dot',
+      font: { size: 10, color: '#f0f0f0', strokeWidth: 1, strokeColor: '#000' },
+      borderWidth: 1,
+      _type: 'entity',
+      _data: entityData,
+    };
+  });
+  const visEdges = edges.map((edge, index) => ({
+    id: 'topo_' + index,
+    from: edge.source,
+    to: edge.target,
+    color: { color: edge.relation === 'related' ? '#7d87b5' : '#505678', opacity: edge.relation === 'related' ? 0.45 : 0.25 },
+    width: edge.relation === 'related' ? 1 + ((edge.weight || 0) * 2.4) : 1.2,
+    smooth: { type: 'continuous' },
+  }));
+  topologyViewCache = { nodes };
+  renderNetwork(nodes, visEdges, { gravity: -120, spring: 170, central: 0.006, overlap: 0.9 });
+  buildLegendTopology(nodes);
+  document.getElementById('legend-title').textContent = 'Topology';
+  showOverviewInfo('Topology', 'A structural view across mega-topics, topics, and entities linked by containment, similarity, and presence.', 'Double-click a topic to drill into the map, or an entity to open its detail.');
+  updateStats(nodes.length + ' nodes · ' + visEdges.length + ' links');
+}
+
+function renderOntologyView() {
+  const visible = visibleClusterIds();
+  const triples = (ONTOLOGY.triples || []).filter(triple => {
+    if (!filterFrom || !filterTo) return true;
+    if (triple.predicate === 'appears_in') {
+      return visible.has(parseInt(String(triple.object).split(':')[1], 10));
+    }
+    const shared = (((triple.evidence || {}).shared_clusters) || []);
+    if (!shared.length) return true;
+    return shared.some(clusterId => visible.has(clusterId));
+  }).filter(triple => matchesSearch([
+    triple.subject_label,
+    triple.object_label,
+    triple.label,
+    triple.predicate,
+  ]));
+  const groups = {};
+  triples.forEach(triple => {
+    if (!groups[triple.predicate]) groups[triple.predicate] = [];
+    groups[triple.predicate].push(triple);
+  });
+  let html = '<div class="doc-shell">';
+  html += '<div class="doc-intro">A lightweight ontology inferred from the current run. It stays typed and readable: classes, predicates, then concrete triples with evidence instead of a long formal dump.</div>';
+  const predicates = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
+  predicates.forEach(predicate => {
+    html += '<div class="triple-group"><div class="doc-section-label">' + esc(predicate.replace(/_/g, ' ')) + '</div><div class="triple-list">';
+    groups[predicate].slice(0, 60).forEach((triple, index) => {
+      html += '<button class="triple-row" type="button" onclick="showOntologyTriple(' + index + ', \\'' + predicate.replace(/'/g, "\\'") + '\\')">';
+      html += '<div class="triple-main"><span>' + esc(triple.subject_label || triple.label || triple.subject || '') + '</span><span class="triple-predicate">' + esc(predicate) + '</span><span>' + esc(triple.object_label || triple.object || '') + '</span></div>';
+      html += '<div class="triple-meta">confidence ' + (triple.confidence || 0).toFixed(3) + '</div>';
+      html += '</button>';
+    });
+    html += '</div></div>';
+  });
+  if (!predicates.length) html += '<div class="doc-empty">No ontology triples match the current filters.</div>';
+  html += '</div>';
+  renderDocumentSurface(html);
+  window.__ontologyGroups = groups;
+  buildLegendOntology(predicates, groups);
+  showOverviewInfo('Ontology', 'Read the triples as typed statements over the current map.', 'Open a row to inspect evidence and jump back to related topics.');
+  updateStats(triples.length + ' triples · ' + (ONTOLOGY.classes || []).length + ' classes');
+}
+
+function showOntologyTriple(index, predicate) {
+  const triple = (((window.__ontologyGroups || {})[predicate]) || [])[index];
+  if (!triple) return;
+  let html = '<div class="field"><b>' + esc(triple.subject_label || triple.label || triple.subject || '') + '</b></div>';
+  html += '<div class="field"><span class="mega-badge">' + esc(predicate.replace(/_/g, ' ')) + '</span></div>';
+  html += '<div class="summary">' + esc((triple.subject_label || triple.label || triple.subject || '') + ' ' + predicate.replace(/_/g, ' ') + ' ' + (triple.object_label || triple.object || '')) + '</div>';
+  html += '<div class="field"><b>Confidence:</b> ' + (triple.confidence || 0).toFixed(3) + '</div>';
+  const shared = (((triple.evidence || {}).shared_clusters) || []);
+  if (shared.length) {
+    html += '<div style="margin-top:8px"><b>Evidence topics:</b></div>';
+    shared.slice(0, 8).forEach(clusterId => {
+      const cluster = clusterById[clusterId];
+      const label = cluster ? cluster.label : ('Cluster ' + clusterId);
+      html += '<span class="related-item" onclick="openClusterFromSurface(' + clusterId + ')">' + esc(label) + '</span> ';
+    });
+  }
+  document.getElementById('info-content').innerHTML = html;
+}
+
+function buildLegendGlossary() {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  const counts = GLOSSARY.type_counts || {};
+  Object.keys(counts).sort().forEach(type => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = '<div class="legend-dot" style="background:' + entityTypeColor(type) + '"></div><span class="legend-label">' + esc(type) + '</span><span class="legend-count">' + counts[type] + '</span>';
+    item.onclick = () => {
+      document.getElementById('search').value = type;
+      currentSearchTerm = type;
+      renderGlossaryView();
+    };
+    legend.appendChild(item);
+  });
+  document.getElementById('legend-title').textContent = 'Glossary';
+}
+
+function buildLegendTaxonomy(topicTree, entityTree) {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  [
+    ['Mega-topics', topicTree.length, '#7b61c8'],
+    ['Entity roots', entityTree.length, '#4E79A7'],
+  ].forEach(meta => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = '<div class="legend-dot" style="background:' + meta[2] + '"></div><span class="legend-label">' + meta[0] + '</span><span class="legend-count">' + meta[1] + '</span>';
+    legend.appendChild(item);
+  });
+  document.getElementById('legend-title').textContent = 'Taxonomy';
+}
+
+function buildLegendTopology(nodes) {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  [
+    ['Mega-topics', nodes.filter(node => node._type === 'super').length, '#7b61c8'],
+    ['Topics', nodes.filter(node => node._type === 'cluster').length, '#2e6ca5'],
+    ['Entities', nodes.filter(node => node._type === 'entity').length, '#59A14F'],
+  ].forEach(meta => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = '<div class="legend-dot" style="background:' + meta[2] + '"></div><span class="legend-label">' + meta[0] + '</span><span class="legend-count">' + meta[1] + '</span>';
+    legend.appendChild(item);
+  });
+}
+
+function buildLegendOntology(predicates, groups) {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  predicates.slice(0, 8).forEach(predicate => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = '<div class="legend-dot" style="background:#4E79A7"></div><span class="legend-label">' + esc(predicate.replace(/_/g, ' ')) + '</span><span class="legend-count">' + groups[predicate].length + '</span>';
+    item.onclick = () => {
+      document.getElementById('search').value = predicate;
+      currentSearchTerm = predicate;
+      renderOntologyView();
+    };
+    legend.appendChild(item);
+  });
+  document.getElementById('legend-title').textContent = 'Ontology';
+}
+
+function openClusterFromSurface(clusterId) {
+  document.getElementById('search').value = '';
+  currentSearchTerm = '';
+  setSurfaceRoute('map', false);
+  currentSurface = 'map';
+  closeEchoes(true);
+  syncSurfaceButtons();
+  drillIntoCluster(clusterId);
+}
+
+function openEntityFromSurface(slug) {
+  const entry = (GLOSSARY.entries || []).find(item => item.slug === slug);
+  if (!entry) return;
+  showEntityDetail(entry.name);
+}
+
+function buildLegendEntities(entities) {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  const typeOrder = ['person', 'organization', 'project', 'tool', 'location', 'other'];
+  const labels = {
+    person: 'People',
+    organization: 'Organizations',
+    project: 'Projects',
+    tool: 'Tools',
+    location: 'Locations',
+    other: 'Other',
+  };
+  typeOrder.forEach(type => {
+    const list = entities.filter(e => (e.type || 'other') === type);
+    if (!list.length) return;
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = '<div class="legend-dot" style="background:' + entityTypeColor(type) + '"></div><span class="legend-label"><b>' + labels[type] + '</b></span><span class="legend-count">' + list.length + '</span>';
+    item.onclick = () => {
+      const first = list[0];
+      if (!first || !network) return;
+      const nodeId = entityNodeId(first.name);
+      try {
+        network.focus(nodeId, { scale: 1.1, animation: true });
+        network.selectNodes([nodeId]);
+      } catch (e) {}
+    };
+    legend.appendChild(item);
+  });
+}
+
+function showEntityNodeInfo(e) {
+  let h = '<div class="field"><b>' + esc(e.name) + '</b></div>';
+  h += '<div class="field"><span class="mega-badge">' + esc((e.type || 'entity') + ' · ' + (e.mention_count || 0) + ' mentions') + '</span></div>';
+  if (e.summary) h += '<div class="summary">' + esc(e.summary) + '</div>';
+  if (e.cluster_ids && e.cluster_ids.length) {
+    h += '<div style="margin-top:8px"><b>Topics:</b></div>';
+    e.cluster_ids.slice(0, 12).forEach(cid => {
+      const c = clusterById[cid];
+      const label = c ? c.label : ('Cluster ' + cid);
+      h += '<span class="related-item" onclick="focusOrDrill(' + cid + ')">' + esc(label) + '</span> ';
+    });
+  }
+  h += '<div class="drill-hint">Double-click to open full entity detail.</div>';
+  document.getElementById('info-content').innerHTML = h;
 }
 
 function buildLevel0() {
@@ -1021,7 +1751,10 @@ function buildLevel0() {
 }
 
 function drillIntoSuper(superId) {
+  currentSurface = 'map';
+  setSurfaceRoute('map', false);
   currentLevel = 1; currentSuperId = superId; currentClusterId = null;
+  syncSurfaceButtons();
   updateBreadcrumb(); buildLevel1(superId);
 }
 
@@ -1056,7 +1789,10 @@ function buildLevel1(superId) {
 }
 
 async function drillIntoCluster(clusterId) {
-  currentLevel = 2; currentClusterId = clusterId;
+  currentSurface = 'map';
+  setSurfaceRoute('map', false);
+  currentLevel = 2; currentClusterId = clusterId; currentSubId = null;
+  syncSurfaceButtons();
   updateBreadcrumb();
   const cl = clusterById[clusterId];
   document.getElementById('info-content').innerHTML = '<div class="field"><b>' + esc(cl.label) + '</b> (' + cl.size + ' thoughts)</div>' + (cl.summary ? '<div class="summary">' + esc(cl.summary) + '</div>' : '') + '<div class="drill-hint">Loading thoughts...</div>';
@@ -1072,7 +1808,97 @@ async function drillIntoCluster(clusterId) {
   } finally { showLoading(false); }
 }
 
+function subClusterMatchCount(sc, thoughts) {
+  if (!filterFrom || !filterTo) return sc.size;
+  return sc.member_offsets.filter(i => {
+    const t = thoughts[i];
+    if (!t || !t.timestamp) return false;
+    const d = t.timestamp.substring(0, 10);
+    return d >= filterFrom && d <= filterTo;
+  }).length;
+}
+
 function buildLevel2(clusterId, thoughts) {
+  const cl = clusterById[clusterId];
+  const sc = clusterToSuper[clusterId];
+  const scIdx = sc ? sc._idx : 0;
+  const color = PALETTE[scIdx % PALETTE.length];
+  if (!cl.sub_clusters || cl.sub_clusters.length < 2) {
+    buildLevel3(clusterId, null, thoughts);
+    return;
+  }
+  currentLevel = 2;
+  syncSurfaceButtons();
+  updateBreadcrumb();
+  const nodes = [];
+  cl.sub_clusters.forEach(sub => {
+    const mc = subClusterMatchCount(sub, thoughts);
+    const empty = mc === 0;
+    const density = sub.density || 0;
+    const densityStr = density.toFixed(2);
+    const size = Math.max(18, Math.min(60, Math.sqrt(sub.size) * 3.5 + density * 1.5));
+    nodes.push({
+      id: 'sub_' + sub.sub_id,
+      label: sub.label + '\\n(' + mc + ' | d:' + densityStr + ')',
+      title: 'Density: ' + densityStr + ' · Thoughts: ' + mc + '/' + sub.size,
+      color: { background: empty ? '#1a1a2e' : (color + 'aa'), border: empty ? '#3a3a5e' : color, highlight: { background: color + 'cc', border: color } },
+      opacity: empty ? 0.4 : 1.0,
+      size: size,
+      font: { size: 12, color: empty ? '#555' : '#e0e0e0', strokeWidth: empty ? 0 : 2, strokeColor: '#000' },
+      shape: 'dot', borderWidth: empty ? 1 : 2, borderDashes: empty ? [4, 4] : false,
+      _type: 'subcluster', _data: { ...sub, _clusterId: clusterId },
+    });
+  });
+  renderNetwork(nodes, [], { gravity: -60, spring: 120, central: 0.02, overlap: 0.8 });
+  const totalVisible = cl.sub_clusters.reduce((s, sub) => s + subClusterMatchCount(sub, thoughts), 0);
+  buildLegendLevel2SubClusters(cl, thoughts, color);
+  document.getElementById('legend-title').textContent = cl.label + ' — Sub-topics';
+  document.getElementById('info-content').innerHTML = '<div class="field"><b>' + esc(cl.label) + '</b></div><div class="field">' + cl.sub_clusters.length + ' sub-topics \u00b7 ' + totalVisible + '/' + thoughts.length + ' thoughts</div>' + (cl.summary ? '<div class="summary">' + esc(cl.summary) + '</div>' : '') + '<div class="drill-hint">Double-click a sub-topic to see its thoughts.</div>';
+  updateStats(cl.sub_clusters.length + ' sub-topics in ' + cl.label);
+}
+
+function buildLegendLevel2SubClusters(cl, thoughts, color) {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  (cl.sub_clusters || []).slice().sort((a, b) => subClusterMatchCount(b, thoughts) - subClusterMatchCount(a, thoughts)).forEach(sub => {
+    const mc = subClusterMatchCount(sub, thoughts);
+    const density = (sub.density || 0).toFixed(2);
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.style.opacity = mc === 0 ? '0.4' : '1';
+    item.innerHTML = '<div class="legend-dot" style="background:' + (mc === 0 ? '#3a3a5e' : color + '99') + '"></div><span class="legend-label">' + esc(sub.label) + ' <span style="color:#8a8ab5;font-size:10px;">(d:' + density + ')</span></span><span class="legend-count">' + mc + '</span>';
+    item.onclick = () => drillIntoSubCluster(cl.cluster_id, sub.sub_id);
+    legend.appendChild(item);
+  });
+}
+
+function showSubClusterInfo(sub, thoughts) {
+  const mc = subClusterMatchCount(sub, thoughts);
+  let h = '<div class="field"><b>' + esc(sub.label) + '</b></div><div class="field">' + mc + '/' + sub.size + ' thoughts</div>';
+  h += '<div class="field" style="font-size:11px;color:#7a7aaf;">Density: ' + (sub.density || 0).toFixed(2) + '</div>';
+  const sample = sub.member_offsets.slice(0, 3).map(i => thoughts[i]).filter(Boolean);
+  if (sample.length) {
+    h += '<div style="margin-top:8px"><b>Fragments:</b></div>';
+    sample.forEach(t => { h += '<div class="rep-text">' + esc((t.text || '').substring(0, 200)) + '</div>'; });
+  }
+  h += '<div class="drill-hint">Double-click to see thoughts</div>';
+  document.getElementById('info-content').innerHTML = h;
+}
+
+function drillIntoSubCluster(clusterId, subId) {
+  currentSurface = 'map';
+  setSurfaceRoute('map', false);
+  currentLevel = 3; currentClusterId = clusterId; currentSubId = subId;
+  syncSurfaceButtons();
+  updateBreadcrumb();
+  const thoughts = thoughtsCache[clusterId] || [];
+  const cl = clusterById[clusterId];
+  const sub = cl.sub_clusters && cl.sub_clusters.find(s => s.sub_id === subId);
+  const subThoughts = sub ? sub.member_offsets.map(i => thoughts[i]).filter(Boolean) : thoughts;
+  buildLevel3(clusterId, subId, subThoughts);
+}
+
+function buildLevel3(clusterId, subId, thoughts) {
   const cl = clusterById[clusterId], sc = clusterToSuper[clusterId];
   const scIdx = sc ? sc._idx : 0;
   const color = PALETTE[scIdx % PALETTE.length];
@@ -1091,14 +1917,18 @@ function buildLevel2(clusterId, thoughts) {
   Object.values(bySource).forEach(g => { for (let i = 1; i < g.length; i++) edges.push({ id: eid++, from: 't_' + g[i-1], to: 't_' + g[i], color: { opacity: 0.15, color: color }, width: 0.5, smooth: { type: 'continuous' } }); });
   renderNetwork(nodes, edges, { gravity: -30, spring: 80, central: 0.02, overlap: 1.0 });
   buildLegendLevel2(cl, filtered, color);
-  document.getElementById('legend-title').textContent = cl.label;
-  document.getElementById('info-content').innerHTML = '<div class="field"><b>' + esc(cl.label) + '</b> (' + filtered.length + '/' + thoughts.length + ' thoughts)</div>' + (cl.summary ? '<div class="summary">' + esc(cl.summary) + '</div>' : '');
-  updateStats(filtered.length + ' thoughts in ' + cl.label);
+  const sub = cl.sub_clusters && subId !== null && cl.sub_clusters.find(s => s.sub_id === subId);
+  const titleLabel = sub ? cl.label + ' / ' + sub.label : cl.label;
+  document.getElementById('legend-title').textContent = titleLabel;
+  document.getElementById('info-content').innerHTML = '<div class="field"><b>' + esc(titleLabel) + '</b> (' + filtered.length + '/' + thoughts.length + ' thoughts)</div>' + (cl.summary ? '<div class="summary">' + esc(cl.summary) + '</div>' : '');
+  updateStats(filtered.length + ' thoughts');
 }
 
 function renderNetwork(nodesArr, edgesArr, opts) {
   const container = document.getElementById('graph');
   if (network) network.destroy();
+  container.classList.remove('doc-surface');
+  container.innerHTML = '';
   const nodes = new vis.DataSet(nodesArr), edges = new vis.DataSet(edgesArr);
   network = new vis.Network(container, { nodes, edges }, {
     physics: { enabled: true, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: opts.gravity || -60, centralGravity: opts.central || 0.01, springLength: opts.spring || 150, springConstant: 0.04, damping: 0.4, avoidOverlap: opts.overlap || 0.8 }, stabilization: { iterations: 200, fit: true } },
@@ -1110,7 +1940,9 @@ function renderNetwork(nodesArr, edgesArr, opts) {
     if (!node) return;
     if (node._type === 'super') showSuperInfo(node._data);
     else if (node._type === 'cluster') showClusterInfo(node._data);
+    else if (node._type === 'subcluster') showSubClusterInfo(node._data, thoughtsCache[node._data._clusterId] || []);
     else if (node._type === 'thought') showThoughtInfo(node._data);
+    else if (node._type === 'entity') showEntityNodeInfo(node._data);
   });
   network.on('doubleClick', params => {
     if (!params.nodes.length) return;
@@ -1118,6 +1950,8 @@ function renderNetwork(nodesArr, edgesArr, opts) {
     if (!node) return;
     if (node._type === 'super') drillIntoSuper(node._data.super_id);
     else if (node._type === 'cluster') drillIntoCluster(node._data.cluster_id);
+    else if (node._type === 'subcluster') drillIntoSubCluster(node._data._clusterId, node._data.sub_id);
+    else if (node._type === 'entity') showEntityDetail(node._data.name);
   });
 }
 
@@ -1204,20 +2038,43 @@ function showLoading(show) { const el = document.getElementById('loading-overlay
 function updateStats(text) { document.getElementById('stats').textContent = text; }
 
 document.getElementById('search').addEventListener('input', function() {
-  const q = this.value.toLowerCase().trim();
+  currentSearchTerm = this.value.toLowerCase().trim();
+  const q = currentSearchTerm;
+  if (currentSurface === 'glossary') {
+    renderGlossaryView();
+    return;
+  }
+  if (currentSurface === 'taxonomy') {
+    renderTaxonomyView();
+    return;
+  }
   if (q.length < 2) return;
-  if (currentLevel === 0) {
+  if (currentSurface === 'map' && currentLevel === 0) {
     const m = SUPER_CLUSTERS.find(sc => sc.label.toLowerCase().includes(q) || (sc.summary && sc.summary.toLowerCase().includes(q)));
     if (m && network) { network.focus('sc_' + m.super_id, {scale:1.2,animation:true}); network.selectNodes(['sc_' + m.super_id]); }
-  } else if (currentLevel === 1) {
+  } else if (currentSurface === 'map' && currentLevel === 1) {
     const sc = superById[currentSuperId];
     const m = sc.member_ids.map(cid => clusterById[cid]).filter(Boolean).find(c => c.label.toLowerCase().includes(q) || (c.summary && c.summary.toLowerCase().includes(q)));
     if (m && network) { network.focus('c_' + m.cluster_id, {scale:1.2,animation:true}); network.selectNodes(['c_' + m.cluster_id]); }
+  } else if (currentSurface === 'entities') {
+    const m = ENTITIES.find(e => (e.name || '').toLowerCase().includes(q) || (e.summary && e.summary.toLowerCase().includes(q)));
+    if (m && network) {
+      const nodeId = entityNodeId(m.name);
+      try {
+        network.focus(nodeId, { scale:1.2, animation:true });
+        network.selectNodes([nodeId]);
+      } catch (e) {}
+    }
   }
 });
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
+    const panel = document.getElementById('echoes-panel');
+    if (panel && panel.classList.contains('open')) {
+      closeEchoes();
+      return;
+    }
     const popover = document.getElementById('time-popover');
     if (popover && popover.classList.contains('open')) {
       closeTimePopover();
@@ -1226,13 +2083,20 @@ document.addEventListener('keydown', function(e) {
   }
   if (document.activeElement === document.getElementById('search')) return;
   if (e.key === 'Escape' || e.key === 'Backspace') {
-    if (currentLevel === 2) { const sc = clusterToSuper[currentClusterId]; if (sc) drillIntoSuper(sc.super_id); else goToLevel0(); }
+    if (currentSurface && currentSurface !== 'map' && currentSurface !== 'echoes') navigateToSurface('map');
+    else if (currentLevel === 4) goToLevel0();
+    else if (currentLevel === 3) drillIntoCluster(currentClusterId);
+    else if (currentLevel === 2) { const sc = clusterToSuper[currentClusterId]; if (sc) drillIntoSuper(sc.super_id); else goToLevel0(); }
     else if (currentLevel === 1) goToLevel0();
   }
 });
 
 syncTimeUi();
-goToLevel0();
+syncSurfaceButtons();
+navigateToSurface(surfaceFromPath(window.location.pathname), { fromHistory: true, replace: true });
+window.addEventListener('popstate', function() {
+  navigateToSurface(surfaceFromPath(window.location.pathname), { fromHistory: true });
+});
 
 // Entity highlighting
 const _entityIndex = {};
@@ -1298,7 +2162,7 @@ function suggestDirectory(clusterId) {
   const scores = {};
   if (c.representative_texts) {
     c.representative_texts.forEach(t => {
-      const m = (t || '').match(/Projects\/([\w-]+)\//i);
+      const m = (t || '').match(/Projects\\/([\\w-]+)\\//i);
       if (m) scores[m[1]] = (scores[m[1]] || 0) + 1;
     });
   }
@@ -1389,6 +2253,25 @@ function updateChatScope(type, id, label) {
   document.getElementById('chat-scope').innerHTML = '<b>' + esc(label) + '</b> (' + type + ')';
 }
 
+function openChatPanel() {
+  document.getElementById('chat-panel').classList.add('open');
+  const trigger = document.getElementById('query-trigger');
+  if (trigger) trigger.classList.add('active');
+}
+
+function toggleChatPanel() {
+  const panel = document.getElementById('chat-panel');
+  if (!panel) return;
+  if (panel.classList.contains('open')) closeChatPanel();
+  else openChatPanel();
+}
+
+function closeChatPanel() {
+  document.getElementById('chat-panel').classList.remove('open');
+  const trigger = document.getElementById('query-trigger');
+  if (trigger) trigger.classList.remove('active');
+}
+
 async function runQuery() {
   if (!chatScope) {
     document.getElementById('chat-results').innerHTML = '<span class="chat-empty">Click a topic or mega-topic first</span>';
@@ -1452,9 +2335,192 @@ function renderChatResults(data) {
   h += '<div style="color:#555;font-size:11px;margin-top:4px;">' + data.count + ' results from ' + data.total + ' thoughts</div>';
   el.innerHTML = h;
 }
+
+// ─── Echoes: near-duplicate groups ───
+let echoStatusFilter = 'all';
+
+function openEchoes(options = {}) {
+  currentSurface = 'echoes';
+  if (!options.skipRoute) setSurfaceRoute('echoes', !!options.replace);
+  closeChatPanel();
+  syncSurfaceButtons();
+  updateBreadcrumb();
+  document.getElementById('echoes-overlay').classList.add('open');
+  document.getElementById('echoes-panel').classList.add('open');
+  loadEchoes();
+}
+function closeEchoes(silent) {
+  document.getElementById('echoes-overlay').classList.remove('open');
+  document.getElementById('echoes-panel').classList.remove('open');
+  if (!silent && currentSurface === 'echoes') goToLevel0();
+}
+function setEchoStatusFilter(s) {
+  echoStatusFilter = s;
+  document.querySelectorAll('#echoes-controls .seg button').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-es') === s);
+  });
+  loadEchoes();
+}
+
+async function loadEchoes() {
+  const list = document.getElementById('echoes-list');
+  const meta = document.getElementById('echoes-meta');
+  const countEl = document.getElementById('echoes-count');
+  const minSize = parseInt(document.getElementById('echo-min-size').value || '5', 10);
+  const minSim = parseFloat(document.getElementById('echo-min-sim').value || '0.95');
+  list.innerHTML = '<div id="echoes-empty">Loading&hellip;</div>';
+  try {
+    const url = '/api/echoes?min_size=' + encodeURIComponent(minSize) +
+                '&min_sim=' + encodeURIComponent(minSim) +
+                '&status=' + encodeURIComponent(echoStatusFilter);
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data.message) {
+      list.innerHTML = '<div id="echoes-empty">' + esc(data.message) + '</div>';
+      meta.textContent = '';
+      countEl.textContent = '';
+      return;
+    }
+    const thr = data.threshold !== null && data.threshold !== undefined ? data.threshold.toFixed(2) : '?';
+    meta.textContent = 'pipeline threshold ' + thr + ' · total ' + (data.total || 0);
+    countEl.textContent = (data.count || 0) + ' group(s)';
+    renderEchoes(data.echoes || []);
+  } catch (e) {
+    list.innerHTML = '<div id="echoes-empty" style="color:#f85149;">Failed: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderEchoes(groups) {
+  const list = document.getElementById('echoes-list');
+  if (!groups.length) {
+    list.innerHTML = '<div id="echoes-empty">No groups match current filters.</div>';
+    return;
+  }
+  let h = '';
+  groups.forEach(g => {
+    const status = g.status || 'neutral';
+    const dates = (g.date_min || g.date_max) ? (String(g.date_min||'').substring(0,10) + ' → ' + String(g.date_max||'').substring(0,10)) : '';
+    const avg = (g.avg_similarity || 0).toFixed(3);
+    const mn = (g.min_similarity || 0).toFixed(3);
+    const rep = esc((g.representative_text || '').substring(0, 280));
+    const note = esc(g.note || '');
+    const fragsHtml = (g.examples || []).map(ex => {
+      const srcBits = [];
+      if (ex.timestamp) srcBits.push(String(ex.timestamp).substring(0,10));
+      if (ex.source) srcBits.push(ex.source);
+      const meta = srcBits.join(' · ');
+      return '<div class="echo-frag">' + esc(ex.text || '') +
+             (meta ? '<div class="fm">' + esc(meta) + '</div>' : '') + '</div>';
+    }).join('');
+    h += '<div class="echo-card ' + status + '" data-key="' + esc(g.echo_key) + '">' +
+      '<div class="echo-head">' +
+        '<span class="echo-size">' + g.size + ' thoughts</span>' +
+        '<span class="echo-sim">avg ' + avg + ' · min ' + mn + '</span>' +
+        (dates ? '<span class="echo-dates">' + esc(dates) + '</span>' : '') +
+        '<button class="echo-expand" onclick="toggleEcho(this)">details ▾</button>' +
+      '</div>' +
+      '<div class="echo-rep">' + rep + '</div>' +
+      '<div class="echo-frags">' + fragsHtml +
+        '<textarea placeholder="Optional note..." onchange="saveEchoNote(this)">' + note + '</textarea>' +
+      '</div>' +
+      '<div class="echo-actions">' +
+        '<button class="echo-btn observe ' + (status === 'observe' ? 'active' : '') + '" onclick="setEcho(this,\\'observe\\')">Observe</button>' +
+        '<button class="echo-btn discard ' + (status === 'discard' ? 'active' : '') + '" onclick="setEcho(this,\\'discard\\')">Discard</button>' +
+        '<button class="echo-btn neutral ' + (status === 'neutral' ? 'active' : '') + '" onclick="setEcho(this,\\'neutral\\')">Neutral</button>' +
+      '</div>' +
+    '</div>';
+  });
+  list.innerHTML = h;
+}
+
+function toggleEcho(btn) {
+  const card = btn.closest('.echo-card');
+  card.classList.toggle('expanded');
+  btn.textContent = card.classList.contains('expanded') ? 'details ▴' : 'details ▾';
+}
+
+async function setEcho(btn, status) {
+  const card = btn.closest('.echo-card');
+  const key = card.getAttribute('data-key');
+  const textarea = card.querySelector('textarea');
+  const note = textarea ? textarea.value : '';
+  try {
+    const r = await fetch('/api/echoes/' + encodeURIComponent(key), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: status, note: note }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    card.classList.remove('observe','discard','neutral');
+    card.classList.add(status);
+    card.querySelectorAll('.echo-actions .echo-btn').forEach(b => {
+      b.classList.remove('active');
+    });
+    btn.classList.add('active');
+    // If filter is set and status no longer matches, remove card
+    if (echoStatusFilter !== 'all' && echoStatusFilter !== status) {
+      card.remove();
+      const left = document.querySelectorAll('.echo-card').length;
+      document.getElementById('echoes-count').textContent = left + ' group(s)';
+      if (!left) {
+        document.getElementById('echoes-list').innerHTML =
+          '<div id="echoes-empty">No groups match current filters.</div>';
+      }
+    }
+  } catch (e) {
+    alert('Failed to save: ' + e.message);
+  }
+}
+
+async function saveEchoNote(ta) {
+  const card = ta.closest('.echo-card');
+  const key = card.getAttribute('data-key');
+  const activeBtn = card.querySelector('.echo-actions .echo-btn.active');
+  const status = activeBtn ? (activeBtn.classList.contains('observe') ? 'observe' :
+                              activeBtn.classList.contains('discard') ? 'discard' : 'neutral')
+                           : 'neutral';
+  try {
+    await fetch('/api/echoes/' + encodeURIComponent(key), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: status, note: ta.value }),
+    });
+  } catch (e) {}
+}
 </script>
 </body>
 </html>"""
+
+
+def _load_json_payload(path: Path, default: dict | list) -> dict | list:
+  if not path.exists():
+    return default
+  try:
+    return json.loads(path.read_text(encoding="utf-8"))
+  except json.JSONDecodeError:
+    return default
+
+
+def write_condensed_visualization(condensed_json: dict, on_status: Callable[[str], None] | None = None) -> Path:
+  """Render the condensed HTML view using the latest persisted side artifacts."""
+  def status(message: str) -> None:
+    print(message)
+    if on_status:
+      on_status(message)
+
+  html = _CONDENSED_HTML
+  html = html.replace("__CLUSTERS__", json.dumps(condensed_json.get("clusters", [])))
+  html = html.replace("__SUPER_CLUSTERS__", json.dumps(condensed_json.get("super_clusters", [])))
+  html = html.replace("__EDGES__", json.dumps(condensed_json.get("edges", [])))
+  html = html.replace("__PALETTE__", json.dumps(_CONDENSED_PALETTE))
+  html = html.replace("__ENTITIES__", json.dumps(_load_json_payload(config.OUTPUT_DIR / "entities.json", [])))
+  html = html.replace("__GLOSSARY__", json.dumps(_load_json_payload(config.GLOSSARY_PATH, {"entries": [], "concepts": [], "type_counts": {}})))
+  html = html.replace("__TAXONOMY__", json.dumps(_load_json_payload(config.TAXONOMY_PATH, {"topic_tree": [], "entity_tree": [], "stats": {}})))
+
+  viz_path = config.OUTPUT_DIR / "thoughtmap-condensed.html"
+  viz_path.write_text(html, encoding="utf-8")
+  status(f"  Condensed visualization: {viz_path}")
+  return viz_path
 
 
 # ─── Public API ───
@@ -1462,6 +2528,7 @@ function renderChatResults(data) {
 def condense(
     result: ThoughtMapResult,
     on_status: Callable[[str], None] | None = None,
+    embeddings_hd: list | None = None,
 ) -> dict:
     """Run the full condensation pipeline.
 
@@ -1595,6 +2662,17 @@ def condense(
         ts = item.get("timestamp", "")
         chunk_dates.append(ts[:10] if ts else "")  # "YYYY-MM-DD" or ""
 
+    # Pre-compute sub-clusters (on all thoughts, time-filter-stable)
+    status("  Computing sub-clusters...")
+    sub_clusters_cache: dict[int, list[dict]] = {}
+    if embeddings_hd is not None:
+        embs_list = embeddings_hd if isinstance(embeddings_hd, list) else list(embeddings_hd)
+        for c in clusters:
+            subs = compute_sub_clusters(c.member_indices, embs_list, items)
+            sub_clusters_cache[c.cluster_id] = subs
+        total_subs = sum(len(v) for v in sub_clusters_cache.values())
+        status(f"  Sub-clusters: {total_subs} across {len(clusters)} clusters")
+
     clusters_viz = []
     for c in clusters:
         # Compute date range from member chunks
@@ -1602,6 +2680,7 @@ def condense(
             d for idx in c.member_indices
             if 0 <= idx < len(chunk_dates) and (d := chunk_dates[idx])
         )
+        subs = sub_clusters_cache.get(c.cluster_id, [])
         clusters_viz.append({
             "cluster_id": c.cluster_id,
             "label": c.label,
@@ -1615,6 +2694,7 @@ def condense(
                 {"id": rel.cluster_id, "label": rel.label, "similarity": round(sim, 3)}
                 for rel, sim in related_map.get(c.cluster_id, [])[:5]
             ],
+            "sub_clusters": subs,
         })
 
     super_viz = []
@@ -1638,25 +2718,6 @@ def condense(
             "date_max": sc_dates[-1] if sc_dates else "",
         })
 
-    html = _CONDENSED_HTML
-    html = html.replace("__CLUSTERS__", json.dumps(clusters_viz))
-    html = html.replace("__SUPER_CLUSTERS__", json.dumps(super_viz))
-    html = html.replace("__EDGES__", json.dumps(edges))
-    html = html.replace("__PALETTE__", json.dumps(_CONDENSED_PALETTE))
-
-    # Load entities if available
-    entities_path = config.OUTPUT_DIR / "entities.json"
-    if entities_path.exists():
-        entities_data = json.loads(entities_path.read_text(encoding="utf-8"))
-    else:
-        entities_data = []
-    html = html.replace("__ENTITIES__", json.dumps(entities_data))
-
-    viz_path = config.OUTPUT_DIR / "thoughtmap-condensed.html"
-    viz_path.write_text(html, encoding="utf-8")
-    status(f"  Condensed visualization: {viz_path}")
-
-    # ── 9. Save condensed JSON ──
     condensed_json = {
         "generated": datetime.now().isoformat(),
         "model": config.CONDENSE_MODEL,
@@ -1672,5 +2733,8 @@ def condense(
     }
     condensed_path = config.OUTPUT_DIR / "condensed.json"
     condensed_path.write_text(json.dumps(condensed_json, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # ── 9. Save condensed HTML ──
+    write_condensed_visualization(condensed_json, on_status=on_status)
 
     return condensed_json

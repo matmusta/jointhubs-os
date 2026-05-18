@@ -3,740 +3,701 @@ type: prd
 project: thoughtmap
 status: active
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-28
+tags: [type/prd, project/thoughtmap, product/semantic-processing]
 ---
 
-# ThoughtMap — Product Requirements Document
+# ThoughtMap v2 — Semantic Processing PRD
 
-## Overview
+## 1. Summary
 
-ThoughtMap is a local-first personal knowledge pipeline that extracts text from multiple sources (Obsidian vault, Wispr Flow dictations, Second Brain markdown), embeds it via Ollama, clusters it into topic groups, and visualizes connections in an interactive graph.
+ThoughtMap v2 turns raw daily notes, reviews, project notes, and Wispr dictations into a curated semantic memory system. The main change is moving from token/sentence chunking to **semantic thought atomization**: mixed journal sections are split into atomic thoughts before embedding, clustering, NER, and downstream indexes.
 
-This PRD covers **five features** to be implemented sequentially:
+The system should treat raw text as evidence, structured output as interpretation, manual curation as truth, and generated prose as presentation.
 
-1. **Folder Reorganization** — restructure flat Python modules into logical packages
-2. **README & Privacy** — user-facing documentation and data privacy statement
-3. **Named Entity Recognition** — auto-extract people, orgs, projects from clusters
-4. **jointhubs-os Agent** — VS Code Copilot agent for deep work sessions
-5. **Contact Discovery** — NER-driven contact directory (peers/ stays as-is)
+## 2. Problem
 
-## Implementation Status — 2026-04-15
+The current pipeline extracts text, chunks it by sentence/token windows, embeds chunks, stores them in Chroma, clusters them, and then extracts entities. This works technically, but it creates noisy semantic maps because the unit of processing is not always a real thought.
 
-This PRD is now best treated as an implementation record rather than a forward plan.
+Key problems:
 
-- Core scope is implemented: Features 1-5 exist in the codebase and have been exercised end to end through the Dockerized runtime.
-- The main remaining issue is **quality**, not missing functionality: NER still produces long-tail false positives in generated entity outputs, especially some organization/location entries and a few residual person mistakes.
-- One verification step remains inherently manual: confirming the `jointhubs-os` agent appears in the Copilot UI picker on the current machine.
-- A follow-up precision pass on 2026-04-15 tightened validator rules and fixed stale entity-note regeneration, but the generated `_entity-index.md` still shows substantial organization/location noise, so this backlog item remains open.
+- Daily `## Logs` and `## Dziennik` sections often mix multiple topics in one block.
+- Current chunking can split by token boundaries while still mixing unrelated domains.
+- Broad markdown ingestion pulls operational boilerplate and generated artifacts into the semantic index.
+- NER creates many false positives because it operates on noisy chunks and lacks a strong manual source of truth.
+- Manual Kanban curation exists, but only partially controls entities and generated tasks.
+- Chroma grows over time with stale, duplicated, low-value, or incorrectly routed chunks.
 
-### Acceptance Snapshot
+## 3. Goals
 
-| Feature | Status | Evidence | Remaining Gap |
-|---|---|---|---|
-| 1. Folder Reorganization | Implemented | `core/`, `analysis/`, and `web/` packages exist; `run.py`, `__main__.py`, and `__init__.py` use `thoughtmap.*` imports and compatibility exports | None functionally |
-| 2. README & Privacy | Implemented | Root README and ThoughtMap README now describe the local-first ThoughtMap runtime separately from Copilot's cloud execution | None |
-| 3. Named Entity Recognition | Implemented with quality debt | `analysis/ner.py`, NER config, Docker spaCy install, entity report section, `entities/`, `_entity-index.md`, `entities.json`, and `data/entities_cache.json` are present | Precision cleanup in generated entity outputs |
-| 4. jointhubs-os Agent | Implemented | `.github/agents/jointhubs-os.agent.md`, `.github/instructions/thoughtmap.instructions.md`, and global assistant instructions were added/updated | Manual Copilot UI verification not re-run in this session |
-| 5. Contact Discovery | Implemented | Person entity notes are generated and include peer-note source paths; agent instructions explicitly cross-reference `peers/` and ThoughtMap entity notes | None functionally |
+1. Split mixed source text into atomic semantic units before embedding.
+2. Use structured LLM outputs for segmentation, classification, entity candidates, relations, routing, and quality decisions.
+3. Keep long generated prose out of the embedding source layer.
+4. Promote manual Obsidian/Kanban curation into a durable source of truth.
+5. Separate semantic memory from activity tracking, communication tracking, project state, and archive data.
+6. Reduce data growth through routing, retention, deduplication, and hot/cold storage.
+7. Improve NER precision through candidate verification, entity registry, aliases, retyping, rejection, and merge decisions.
+8. Build a local model-optimization path for small fine-tuned extractors, entity resolvers, summarizers, and Vec2Text-style vector narration.
+9. Build an annotation/data-preparation loop that turns automatic candidates into user-labeled training examples.
 
-### What Still Needs To Be Done
+## 4. Non-Goals
 
-1. Continue precision-only NER cleanup until the generated entity index is materially cleaner for daily use, especially for organization/location outputs.
-2. Manually confirm the `jointhubs-os` agent in the VS Code Copilot picker on this machine.
-3. Optionally convert the checklist below from design-time acceptance criteria into a fully checked historical record after the two items above are closed.
+- Reintroducing topology or ontology UI surfaces.
+- Replacing Obsidian as the human editing surface.
+- Sending ThoughtMap data to cloud models by default.
+- Generating large synthetic summaries and treating them as primary evidence.
+- Building a perfect universal taxonomy in the first iteration.
+- Deleting historical data without an explicit rebuild or retention policy.
 
----
+## 5. Product Principles
 
-## Architecture Context
+| Principle | Meaning |
+|---|---|
+| Raw text is evidence | Original notes and transcripts remain the ground truth. |
+| Structured output is interpretation | LLM outputs should be JSON-like classifications and extracted facts, not freeform replacements. |
+| Manual curation is truth | User decisions override model decisions on entities, domains, routing, and suppressions. |
+| Generated prose is presentation | Summaries and labels help humans navigate, but should not become the primary embedding corpus. |
+| Local-first by default | Ollama, Chroma, local markdown, and local SQLite remain the default runtime. |
 
-### Current Pipeline
+## 6. Current System
 
-```
-extract → chunk → embed → cluster → condense → report → viz
-```
+Current pipeline:
 
-### Target Pipeline (after NER)
-
-```
-extract → chunk → embed → cluster → condense → NER → report → viz
-```
-
-### Current File Structure
-
-```
-thoughtmap/
-├── config.py        (305 lines)   Global configuration
-├── run.py           (165 lines)   Pipeline orchestrator
-├── __main__.py      (40 lines)    CLI entry point
-├── __init__.py      (1 line)      Package init
-├── extract.py       (542 lines)   5 data source extractors
-├── chunk.py         (318 lines)   Smart chunking
-├── embed.py         (280 lines)   Ollama/OpenAI/Google embeddings + ChromaDB
-├── cluster.py       (525 lines)   UMAP + HDBSCAN clustering
-├── condense.py      (~1000 lines) LLM summaries + super-clusters + HTML viz
-├── recluster.py     (72 lines)    Standalone re-cluster script
-├── report.py        (118 lines)   REPORT.md generation
-├── index.py         (231 lines)   Domain-grouped index notes
-├── viz.py           (450 lines)   Interactive HTML visualization
-├── server.py        (525 lines)   HTTP server + API endpoints
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── .env.example
+```text
+extract_all
+  -> chunk_all
+  -> embed_batch
+  -> merge_similar_chunks
+  -> store_chunks
+  -> load_all_embeddings
+  -> cluster_all
+  -> semantic artifacts / entities / report / UI / kanban
 ```
 
-### Key Technical Details
+Current limitations:
 
-- **Python 3.11** in Docker container (`python:3.11-slim`)
-- **Ollama** for embeddings (`qwen3-embedding:8b`) and summaries (`gemma4:e2b`)
-- **ChromaDB** for vector storage (local, persistent at `data/chroma/`)
-- **PYTHONPATH=/app** in Docker — package importable as `thoughtmap.*`
-- **All imports are relative**: `from . import config`, `from .cluster import ClusterInfo`
-- **Output directory**: `Second Brain/Operations/thoughtmap-out/`
-- **Server port**: 8585
+- `core/extract.py` splits daily logs mostly by timestamp and section.
+- `core/chunk.py` splits text by sentence/token windows, not by topic.
+- `analysis/ner.py` combines regex cache, spaCy, project heuristics, manual alias overrides, LLM validation, and summaries, but validation is still noisy.
+- `analysis/kanban.py` syncs manual suppressions and title/entity alias overrides, but does not yet act as a full entity/thought/domain registry.
+- `core/embed.py` loads all stored Chroma items for clustering, so stale records remain active until pruned or rebuilt.
 
----
+## 7. Target System
 
-## Feature 1: Folder Reorganization
+Target pipeline:
 
-### Goal
-
-Split 12 flat Python files into 3 logical sub-packages with clear import conventions.
-
-### Target Structure
-
-```
-thoughtmap/
-├── config.py          # stays — root config, all other modules import from here
-├── run.py             # stays — pipeline orchestrator, imports from all sub-packages
-├── __main__.py        # stays — CLI entry point
-├── __init__.py        # stays — update with re-exports
-│
-├── core/              # Data pipeline stages 1-6
-│   ├── __init__.py    # re-exports: TextSegment, Chunk, ClusterInfo, ThoughtMapResult
-│   ├── extract.py     # ← from ./extract.py
-│   ├── chunk.py       # ← from ./chunk.py
-│   ├── embed.py       # ← from ./embed.py
-│   └── cluster.py     # ← from ./cluster.py
-│
-├── analysis/          # Post-clustering analysis
-│   ├── __init__.py    # re-exports: condense, save_report
-│   ├── condense.py    # ← from ./condense.py
-│   ├── recluster.py   # ← from ./recluster.py
-│   ├── report.py      # ← from ./report.py
-│   ├── index.py       # ← from ./index.py
-│   └── ner.py         # NEW (Feature 3)
-│
-├── web/               # HTTP server & visualization
-│   ├── __init__.py    # re-exports: serve, serve_static
-│   ├── server.py      # ← from ./server.py
-│   └── viz.py         # ← from ./viz.py
-│
-├── Dockerfile         # no changes needed (copies whole dir)
-├── docker-compose.yml
-├── requirements.txt
-└── .env.example
+```text
+source extraction
+  -> deterministic section parsing
+  -> semantic thought segmentation
+  -> structured classification
+  -> entity and relation candidate extraction
+  -> curation registry application
+  -> index routing
+  -> embedding for semantic thoughts only
+  -> clustering / entity maps / communication maps / project state / reports
 ```
 
-### Import Convention (MUST follow everywhere)
+Mermaid view:
 
-```python
-# Always use full package paths — never relative shortcuts
-from thoughtmap.config import OUTPUT_DIR, OLLAMA_BASE_URL
-from thoughtmap.core.extract import extract_all, TextSegment
-from thoughtmap.core.chunk import chunk_all, merge_similar_chunks, Chunk
-from thoughtmap.core.embed import embed_batch, store_chunks, load_all_embeddings
-from thoughtmap.core.cluster import cluster_all, ClusterInfo, ThoughtMapResult
-from thoughtmap.analysis.condense import condense
-from thoughtmap.analysis.report import save_report, generate_report
-from thoughtmap.analysis.index import generate_cluster_indices
-from thoughtmap.analysis.ner import extract_entities  # Feature 3
-from thoughtmap.web.server import serve, serve_static
-from thoughtmap.web.viz import generate_viz
+```mermaid
+flowchart TD
+    A[Raw Sources] --> B[Text Segments]
+    B --> C[Thought Atomizer]
+    C --> D[Structured Classifier]
+    D --> E[Entity Candidate Extractor]
+    E --> F[Entity Registry Resolver]
+    D --> G[Index Router]
+    F --> G
+    G --> H[Semantic Hot Store]
+    G --> I[Activity Index]
+    G --> J[Communication Index]
+    G --> K[Project State Index]
+    G --> L[Cold Archive]
+    H --> M[Clusters and Echoes]
+    F --> N[Entity Notes and Entity JSON]
+    I --> O[Kanban Intake]
+    J --> O
+    O --> P[Manual Obsidian Curation]
+    P --> F
+    P --> G
 ```
 
-### Tasks
+## 8. Core Data Model
 
-| # | Task | File(s) | Acceptance Criteria |
-|---|------|---------|-------------------|
-| 1.1 | Create sub-package directories | `core/`, `analysis/`, `web/` | Each has `__init__.py` with re-exports |
-| 1.2 | Move files with `git mv` | All 12 `.py` files | `git status` shows renames, not delete+create |
-| 1.3 | Update imports in `run.py` | [run.py](run.py) | All `from .extract import ...` → `from thoughtmap.core.extract import ...` |
-| 1.4 | Update imports in `__main__.py` | [\_\_main\_\_.py](__main__.py) | `from .server import serve` → `from thoughtmap.web.server import serve` |
-| 1.5 | Update imports in `condense.py` | [condense.py](condense.py) | `from .cluster import ...` → `from thoughtmap.core.cluster import ...` |
-| 1.6 | Update imports in `server.py` | [server.py](server.py) | `from .embed import ...` → `from thoughtmap.core.embed import ...` |
-| 1.7 | Update imports in `recluster.py` | [recluster.py](recluster.py) | All imports updated to new paths |
-| 1.8 | Update imports in `embed.py` | [embed.py](embed.py) | `from .chunk import Chunk` → `from thoughtmap.core.chunk import Chunk` |
-| 1.9 | Update `__init__.py` | [\_\_init\_\_.py](__init__.py) | Add top-level re-exports for backwards compat |
-| 1.10 | Verify Docker build | Terminal | `docker compose up -d --build` succeeds |
-| 1.11 | Verify pipeline | Terminal | Pipeline completes all 7 steps, `localhost:8585` renders graph |
-| 1.12 | Verify imports | Terminal | `python -c "from thoughtmap.core.extract import extract_all; from thoughtmap.analysis.condense import condense; from thoughtmap.web.server import serve; print('OK')"` prints `OK` |
+### 8.1 TextSegment
 
-### Gotchas
+Existing extraction unit. Represents a block from a source file or transcript before semantic splitting.
 
-- **Relative imports in moved files**: Files that import siblings (e.g., `embed.py` imports `from .chunk import Chunk`) need updating to `from thoughtmap.core.chunk import Chunk`
-- **Lazy imports in `server.py`**: Server has runtime imports inside handler functions — search for ALL `from .` patterns, not just top-level
-- **`condense.py` imports `cluster.py`**: Cross-package reference: `from thoughtmap.core.cluster import ClusterInfo, ThoughtMapResult`
-- **Dockerfile doesn't change**: `COPY . /app/thoughtmap/` already copies the whole directory tree
-- **PYTHONPATH=/app**: Package path `thoughtmap.core.extract` resolves to `/app/thoughtmap/core/extract.py` — correct
-
----
-
-## Feature 2: README & Privacy Documentation
-
-### Goal
-
-Clear 2-3 sentence product description + data privacy statement for the root README and ThoughtMap README.
-
-### Tasks
-
-| # | Task | File(s) | Acceptance Criteria |
-|---|------|---------|-------------------|
-| 2.1 | Update root README intro | [../../README.md](../../../README.md) | Contains 2-3 sentence description (see copy below) |
-| 2.2 | Add Privacy & Data section to root README | [../../README.md](../../../README.md) | Section exists with bullet points on local processing |
-| 2.3 | Update ThoughtMap README | [README.md](README.md) | Privacy statement about Ollama-only default |
-
-### Copy: Root README Intro
-
-> **Jointhubs OS** is an open-source AI-powered Second Brain — a system of specialized agents, reusable skills, and structured notes that help you plan, build, and reflect across projects. It runs inside VS Code with GitHub Copilot, using your local Obsidian vault as the knowledge layer. The ThoughtMap pipeline (embeddings, clustering, summaries) runs 100% locally through Ollama — nothing leaves your machine. GitHub Copilot agents use cloud-hosted LLMs (e.g. Claude, GPT) and send context to those providers. You choose which parts of your workflow stay local and which leverage cloud AI.
-
-### Copy: Privacy & Data Section
-
-```markdown
-## Privacy & Data
-
-- **ThoughtMap pipeline is 100% local** — All embeddings, clustering, and LLM summaries run through Ollama on your machine
-- **No telemetry, no cloud sync** — ThoughtMap never sends your notes, thoughts, or dictations off your disk
-- **GitHub Copilot agents use cloud LLMs** — When you interact with agents in VS Code, context is sent to the model provider (e.g. Anthropic, OpenAI) per GitHub Copilot's privacy policy
-- **Optional cloud embedding providers** — OpenAI and Google embedding APIs available for ThoughtMap if you explicitly set API keys
-- **Data sources** — Local Obsidian vault, Wispr Flow SQLite database, repository markdown files
-- **Browser dependency** — The visualization page loads vis-network.js from a CDN (the only external network request)
-```
-
----
-
-## Feature 3: Named Entity Recognition (NER)
-
-### Goal
-
-After condensation, automatically extract named entities (people, organizations, projects, tools, locations) from cluster content. Generate per-entity notes with cross-references and Ollama summaries.
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      NER Pipeline                           │
-│                                                             │
-│  1. Load cache (entities_cache.json)                        │
-│  2. Regex scan: find known entities in all chunks           │
-│  3. spaCy scan: extract NEW entities from unmatched chunks  │
-│  4. Deduplicate: merge aliases (case, whitespace, fuzzy)    │
-│  5. Cross-reference: map entities → clusters → source files │
-│  6. Ollama summarize: 2-3 sentence summary per entity       │
-│  7. Generate output: markdown notes + entities.json         │
-│  8. Update cache                                            │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Data Model
-
-```python
-@dataclass
-class Entity:
-    name: str              # Canonical name: "Anna Buchwald"
-    type: str              # "person" | "organization" | "project" | "tool" | "location"
-    aliases: list[str]     # ["Anna", "Buchwald", "anna buchwald"]
-    normalized: str        # Lowercase, no diacritics, no extra spaces: "anna buchwald"
-    cluster_ids: list[int] # Clusters where this entity appears
-    source_files: list[str] # Source file paths
-    mention_count: int     # Total mentions across all chunks
-    summary: str           # Ollama-generated 2-3 sentence summary
-    first_seen: str        # ISO date of first appearance
-```
-
-### Cache Mechanism
-
-**File**: `data/entities_cache.json`
+Required fields:
 
 ```json
 {
-  "jan kowalski": {
-    "name": "Jan Kowalski",
-    "type": "person",
-    "aliases": ["Jan", "Kowalski"],
-    "normalized": "jan kowalski",
-    "first_seen": "2026-03-15"
+  "segment_id": "stable hash",
+  "source": "obsidian-daily | wispr-flow | second-brain | review | project-note",
+  "source_file": "Second Brain/...",
+  "section": "Logs | Dziennik | Projects | ...",
+  "timestamp": "2026-04-28T10:12:00",
+  "text": "raw extracted text"
+}
+```
+
+### 8.2 ThoughtAtom
+
+New semantic unit. This becomes the primary object for routing, embedding, clustering, and curation.
+
+```json
+{
+  "atom_id": "stable hash",
+  "parent_segment_id": "segment hash",
+  "source_offsets": {"start": 0, "end": 742},
+  "text": "original text span for this thought",
+  "title": "short generated title",
+  "summary": "optional one-sentence summary",
+  "language": "pl | en | mixed",
+  "signal_type": "thought | decision | task | communication | research | project_update | boilerplate | generated_output",
+  "domains": [
+    {"id": "fenix", "confidence": 0.92},
+    {"id": "ai_rd", "confidence": 0.63}
+  ],
+  "index_targets": ["semantic", "project", "entity"],
+  "entity_candidates": [],
+  "relation_candidates": [],
+  "quality": "keep | low_value | duplicate | boilerplate | needs_review",
+  "curation_state": "auto | verified | rejected | edited",
+  "confidence": 0.86
+}
+```
+
+### 8.3 EntityCandidate
+
+```json
+{
+  "name": "Konrad Bujak",
+  "type": "person | organization | project | tool | location | concept",
+  "canonical_name": "Konrad Bujak",
+  "aliases": ["Konrad"],
+  "evidence_span": "fragment from source text",
+  "source_atom_id": "atom hash",
+  "confidence": 0.88,
+  "decision": "candidate | verified | rejected | retype | merge"
+}
+```
+
+### 8.4 RelationCandidate
+
+```json
+{
+  "subject": "Konrad Bujak",
+  "predicate": "related_to_project | awaiting_reply | owns_task | mentioned_in_context | collaborates_with",
+  "object": "Fenix",
+  "status": "candidate | verified | rejected",
+  "timestamp": "2026-04-28",
+  "evidence": "source text span",
+  "confidence": 0.76
+}
+```
+
+### 8.5 EntityRegistry
+
+Durable manual source of truth. Stored outside generated outputs.
+
+Suggested path:
+
+```text
+Second Brain/Projects/thoughtmap/data/curation/entity_registry.json
+```
+
+Suggested shape:
+
+```json
+{
+  "entities": {
+    "person:konrad-bujak": {
+      "canonical_name": "Konrad Bujak",
+      "type": "person",
+      "aliases": ["Konrad"],
+      "status": "verified",
+      "source": "manual",
+      "updated_at": "2026-04-28"
+    }
   },
-  "fenix": {
-    "name": "Fenix",
-    "type": "project",
-    "aliases": ["fenix", "Fenix platform"],
-    "normalized": "fenix",
-    "first_seen": "2026-01-20"
+  "rejected": {
+    "concept:acceptance-criteria": {
+      "reason": "generic concept, not named entity",
+      "updated_at": "2026-04-28"
+    }
+  },
+  "merges": {
+    "person:k-bujak": "person:konrad-bujak"
   }
 }
 ```
 
-**Cache logic**:
-1. On startup: load `entities_cache.json` (create empty if missing)
-2. Build regex patterns from cached entities: case-insensitive, whitespace-flexible
-   ```python
-   # For "Jan Kowalski" → r'jan\s+kowalski' (case-insensitive)
-   # For "Fenix" → r'\bfenix\b' (word boundary)
-   ```
-3. Scan ALL chunks with regex → mark matched entities + chunk IDs
-4. For chunks with NO regex matches → run spaCy NER
-5. Merge spaCy-discovered entities with cache (deduplicate)
-6. Update cache with new entities
-7. Save updated `entities_cache.json`
+## 9. Functional Requirements
 
-**Cache invalidation**: 
-- Manual: delete `data/entities_cache.json` → full spaCy re-scan
-- Automatic: never expires (entities are additive)
+### FR1 — Semantic Thought Atomization
 
-### Normalization Rules
+The system shall split mixed source segments into atomic thoughts before chunking and embedding.
 
-```python
-def normalize_entity(name: str) -> str:
-    """Normalize entity name for dedup and matching."""
-    name = name.lower().strip()
-    name = re.sub(r'\s+', ' ', name)         # collapse whitespace
-    name = unicodedata.normalize('NFKD', name)
-    name = name.encode('ascii', 'ignore').decode()  # strip diacritics
-    return name
+Requirements:
+
+- Apply deterministic splitting first: headings, timestamps, bullets, blank lines, task markers, markdown tables.
+- Trigger LLM segmentation for long or mixed segments.
+- Preserve source offsets and parent segment IDs.
+- Avoid paraphrasing the source text as the primary atom text.
+- Assign each atom a stable ID based on source identity and normalized text.
+
+Acceptance criteria:
+
+- A daily `Dziennik` block containing multiple topics produces multiple ThoughtAtoms.
+- Each atom links back to its source file, section, timestamp, and parent segment.
+- Embedding uses atom text, not the full mixed parent segment.
+
+### FR2 — Structured Output First
+
+The system shall use structured LLM outputs for preprocessing.
+
+Structured tasks:
+
+- thought segmentation
+- signal classification
+- domain assignment
+- index routing
+- entity candidate extraction
+- relation candidate extraction
+- quality classification
+- short title generation
+
+Constraints:
+
+- LLM output must be parsed as JSON or a schema-equivalent structure.
+- Invalid output must fail closed into `needs_review`, not silently pollute the semantic store.
+- Generated summaries must be short and must not replace evidence text.
+
+Acceptance criteria:
+
+- The segmentation module emits valid JSON for test fixtures.
+- Invalid JSON is logged and routed to review without breaking the pipeline.
+- Long generated prose is not embedded as source evidence.
+
+### FR3 — Index Routing
+
+The system shall decide which indexes receive each ThoughtAtom.
+
+Index targets:
+
+| Target | Purpose | Examples |
+|---|---|---|
+| `semantic` | Long-term topic memory | insights, decisions, project thinking |
+| `entity` | Entity evidence | people, organizations, tools, projects |
+| `communication` | Contact and thread tracking | follow-ups, unanswered messages, stakeholder mentions |
+| `activity` | Tasks and operational loops | TODOs, carry-forward, status gaps |
+| `project` | Project state | decisions, blockers, milestones |
+| `archive` | Low-frequency historical evidence | old but valid source text |
+| `discard` | Excluded from active processing | boilerplate, generated artifacts, logs without semantic value |
+
+Acceptance criteria:
+
+- Boilerplate and generated ThoughtMap outputs are not embedded into the semantic index.
+- Communication atoms can feed communication maps without becoming dominant semantic clusters.
+- Project update atoms can update project-specific views without flooding general clustering.
+
+### FR4 — Entity Registry and NER Precision
+
+The system shall treat spaCy and LLM NER as candidate generation, not truth.
+
+Requirements:
+
+- Load entity registry before NER resolution.
+- Apply verified aliases and canonical names before deduplication.
+- Apply rejected entities before output generation.
+- Support manual decisions: verify, reject, retype, merge, alias, rename.
+- Keep communication/project entities distinct from generic semantic concepts.
+
+Acceptance criteria:
+
+- Rejected false positives do not reappear after reruns.
+- Manual aliases affect entity notes and `_entity-index.md`.
+- Retyped entities move to the correct entity category.
+- Merge decisions collapse duplicate entities across runs.
+
+### FR5 — Manual Curation Surfaces
+
+The system shall expose model uncertainty through Obsidian-editable curation surfaces.
+
+Required surfaces:
+
+| Surface | Purpose |
+|---|---|
+| `ThoughtMap Intake.md` | Action/task/communication candidate triage. |
+| `ThoughtMap Entity Curation.md` | Verify, reject, merge, alias, and retype entity candidates. |
+| `ThoughtMap Segment Curation.md` | Mark atoms as keep, split needed, wrong domain, boilerplate, discard. |
+| `ThoughtMap Domain Curation.md` | Review domain assignments and emerging domain labels. |
+
+Requirements:
+
+- Generated cards must include stable hidden tracking IDs.
+- Deleted or moved cards must update curation JSON.
+- Manual curation must be applied before the next generated output.
+- Manual decisions must not be overwritten by regeneration.
+
+Acceptance criteria:
+
+- Moving an entity card to `Reject` writes a rejected registry entry.
+- Renaming an entity card updates canonical name or aliases.
+- Marking a segment as `Discard` prevents it from active semantic embedding.
+- Marking a segment as `Split needed` sends it back to segmentation review.
+
+### FR6 — Data Reduction and Storage Tiers
+
+The system shall limit active store growth and keep cold evidence available.
+
+Hot store:
+
+- verified semantic atoms
+- recent high-confidence project updates
+- recent communication/action candidates
+- active entity evidence
+
+Cold store:
+
+- old raw source snapshots
+- low-frequency historical atoms
+- discarded but auditable records
+- generated artifacts from prior runs
+
+Reduction mechanisms:
+
+- stable source hashing
+- exact text deduplication
+- near-duplicate Echoes grouping
+- retention by index target
+- pruning stale Chroma entries no longer present in the active manifest
+- excluding generated output directories from ingestion
+
+Acceptance criteria:
+
+- A rebuild can produce an active manifest of atoms intended for Chroma.
+- Chroma contains only active semantic records after prune/rebuild.
+- Cold records remain inspectable as JSON/markdown evidence but are not clustered by default.
+
+### FR7 — Observability and Auditability
+
+The system shall report what it kept, discarded, routed, and asked the user to review.
+
+Required outputs:
+
+- `thought_atoms.json`
+- `thought_atom_manifest.json`
+- `entity_candidates.json`
+- `entity_registry.json`
+- `relation_candidates.json`
+- `routing_report.json`
+- `curation_report.md`
+
+Acceptance criteria:
+
+- Each run reports counts by source, signal type, domain, index target, and quality.
+- The report lists top rejected reasons.
+- The report lists top uncertain atoms/entities requiring curation.
+
+### FR8 — Fine-Tuned Model Layer
+
+The system shall support optional local fine-tuned models for repeated structured tasks.
+
+Target models:
+
+| Model | Purpose |
+|---|---|
+| Entity Type Resolver | Fix person/organization/location/project/tool/concept confusion. |
+| Atomizer / Router | Split source segments and assign signal type, domain, and index targets. |
+| Summary / Labeler | Generate short faithful cluster/entity labels and summaries. |
+| Vec2Text / Vector Narrator | Describe embeddings, centroids, and vector directions for interpretability. |
+
+Supporting product surface:
+
+- annotation UI in the existing web app,
+- generated `ThoughtMap Annotation Queue.md`,
+- local annotation/task store under `data/annotations/`,
+- dataset compiler from accepted annotations into train/eval JSONL.
+
+Requirements:
+
+- Fine-tuned models must be optional and local-first.
+- Manual curation and entity registry decisions must override model output.
+- Model outputs must be schema-validated before entering pipeline state.
+- Training data and LoRA adapters should be treated as private runtime artifacts by default.
+- Baselines must be recorded before fine-tuning so improvements are measurable.
+- Generated ThoughtMap output may create candidate annotation tasks, but must not be treated as gold training truth without explicit user annotation or durable registry confirmation.
+- Gemini/OpenAI/local LLM annotations may be used as preannotations or silver labels, but must be stored separately from user gold labels.
+
+Acceptance criteria:
+
+- Entity Type Resolver beats the generic-prompt baseline on a curated eval set.
+- Organization/location confusion is explicitly measured and reduced.
+- Atomizer / Router improves manual atom-purity and routing scores.
+- Summary / Labeler outputs are shorter and more faithful than the current generic model baseline.
+- Vec2Text is used for vector interpretation, not as source truth.
+- Annotation tasks explain what the user is deciding, which fields are editable, and what makes a good label.
+
+### FR9 — Annotation and Training Data Preparation
+
+The system shall convert ThoughtMap candidates into training data through explicit annotation.
+
+Requirements:
+
+- Generate annotation tasks from entity candidates, atom splits, routing decisions, summaries, relations, and vector narration candidates.
+- Provide a simple web annotation surface and an Obsidian Kanban annotation queue.
+- Explain each task type to the user: what is being decided, which fields are editable, and what makes a good label.
+- Store annotation tasks, user decisions, and assisted model suggestions under local `data/annotations/`.
+- Treat user decisions and durable registry decisions as gold labels.
+- Treat ThoughtMap-generated candidates as proposals, not truth.
+- Treat Gemini/OpenAI/local-model suggestions as preannotations or silver labels unless the user accepts them.
+- Export task-specific JSONL datasets with gold, silver, hard-negative, and eval splits kept separate.
+
+Acceptance criteria:
+
+- `entity_type_resolution` tasks can be generated from current `entities.json`, registry decisions, and source snippets.
+- `/annotate` or `/annotate/entities` supports constrained entity labeling.
+- `ThoughtMap Annotation Queue.md` lists pending annotation work for Obsidian triage.
+- Dataset export creates train/eval JSONL plus a manifest with counts and split policy.
+- Cloud preannotation is opt-in and recorded with provider, model, and prompt version.
+
+## 10. LLM Usage Policy
+
+Use LLMs for:
+
+- segmentation into atomic thoughts
+- structured classification
+- entity candidate extraction
+- relation candidate extraction
+- short titles
+- short summaries for UI/navigation
+- cluster/entity labels after analysis
+
+Avoid LLMs for:
+
+- rewriting source evidence before embedding
+- generating long synthetic records that enter the semantic store
+- overriding manual curation
+- deciding permanent truth without registry confirmation when confidence is low
+
+Default runtime:
+
+- Local Ollama models only.
+- Cloud providers remain opt-in and explicit.
+
+## 11. UX Requirements
+
+### Obsidian
+
+- Curation boards should be readable and editable in Obsidian.
+- Cards should contain concise titles, source snippets, and hidden tracking metadata.
+- Curation should feel like reviewing candidates, not editing machine files.
+
+### Web UI
+
+- Keep current condensed/search/entity/taxonomy/echoes surfaces.
+- Do not re-add topology or ontology tabs.
+- Node click should update scope but not automatically open search.
+- Add review affordances only after the underlying curation registry exists.
+
+## 12. Technical Design
+
+### New Modules
+
+Suggested files:
+
+```text
+core/segment.py              # ThoughtAtom creation from TextSegment
+analysis/classify.py         # structured signal/domain/index classification
+analysis/entity_registry.py  # manual truth registry load/apply/write
+analysis/relations.py        # relation candidate extraction and resolution
+analysis/routing.py          # index routing and retention decisions
+analysis/curation.py         # Obsidian curation board generation/sync
+analysis/storage_tiers.py    # hot/cold manifest and Chroma prune planning
+training/datasets.py         # local dataset builders for fine-tuning/evaluation
+training/evaluate.py         # task metrics and baseline comparisons
+training/model_cards.py      # local model-card metadata for private adapters
+annotation/tasks.py          # annotation task schemas and validation
+annotation/generate.py       # create annotation tasks from ThoughtMap candidates
+annotation/store.py          # append/load/update annotation records
+annotation/export.py         # compile accepted labels into train/eval JSONL
+annotation/preannotate.py    # optional local/Gemini/OpenAI preannotation
 ```
 
-**Dedup matching**: Two entities are the same if:
-- `normalize_entity(a) == normalize_entity(b)`, OR
-- One is a substring of the other AND same type, OR
-- Levenshtein distance < 0.15 (reuse existing `python-Levenshtein` dep)
+### Pipeline Change
 
-### Ollama Summary Prompt
+Target `run.py` sequence:
 
-```
-You are analyzing a named entity found across a personal knowledge base.
-Below are text fragments where this entity appears.
-
-Entity: {name} (type: {type})
-Found in {mention_count} text fragments across {len(cluster_ids)} topic clusters.
-
-Representative mentions:
-{fragments}
-
-Write a concise 2-3 sentence summary of this entity's role and context
-in the knowledge base. Include relationships to projects, people, or topics
-if apparent. Write in the same language as the fragments.
+```text
+segments = extract_all()
+atoms = atomize_segments(segments)
+classified_atoms = classify_atoms(atoms)
+entity_candidates = extract_entity_candidates(classified_atoms)
+entity_registry = load_entity_registry()
+resolved_entities = resolve_entities(entity_candidates, entity_registry)
+routed_atoms = route_atoms(classified_atoms, resolved_entities)
+chunks = chunk_atoms_for_embedding(routed_atoms where target includes semantic)
+embeddings = embed_batch(new_semantic_texts)
+store_chunks(active_semantic_chunks, embeddings)
+prune_inactive_chroma_records(active_manifest)
+cluster_all(active_semantic_items, embeddings)
+generate_reports_and_curation_outputs()
 ```
 
-### Output Structure
-
-```
-thoughtmap-out/
-├── entities/
-│   ├── _entity-index.md         # Master index table
-│   ├── person/
-│   │   ├── jan-kowalski.md
-│   │   └── konrad-bujak.md
-│   ├── organization/
-│   │   ├── brainlab.md
-│   │   └── jointhubs.md
-│   ├── project/
-│   │   ├── fenix.md
-│   │   └── neurohubs.md
-│   ├── tool/
-│   │   ├── obsidian.md
-│   │   └── ollama.md
-│   └── location/
-│       └── madrid.md
-├── entities.json                # Machine-readable (all entities + metadata)
-```
-
-### Entity Note Format
-
-```markdown
----
-type: entity
-entity_type: person
-name: Jan Kowalski
-aliases: [Jan, Kowalski]
-clusters: [12, 45, 67]
-mentions: 15
-first_seen: 2026-03-15
-generated: 2026-04-15
----
-
-# Jan Kowalski
-
-## Summary
-
-[Ollama-generated 2-3 sentence summary]
-
-## Appearances by Cluster
-
-| Cluster | Label | Mentions |
-|---------|-------|----------|
-| 12 | BrainLab Research | 5 |
-| 45 | Neurohubs Distribution | 8 |
-| 67 | EEG Analysis | 2 |
-
-## Source Files
-
-- Second Brain/Projects/neurohubs/CONTEXT.md
-- Second Brain/Personal/daily/2026-04-13-review.md
-```
-
-### Entity Index Format (`_entity-index.md`)
-
-```markdown
-# ThoughtMap Entity Index — 2026-04-15
-
-## Summary
-- **{N}** entities discovered across **{M}** clusters
-- People: {n} | Organizations: {n} | Projects: {n} | Tools: {n} | Locations: {n}
-
-## People
-| Entity | Mentions | Clusters | Summary |
-|--------|----------|----------|---------|
-| [[person/jan-kowalski\|Jan Kowalski]] | 15 | 3 | EEG research partner... |
-
-## Organizations
-...
-
-## Projects
-...
-```
-
-### Configuration
-
-Add to `config.py`:
-
-```python
-# ─── Named Entity Recognition ───
-NER_ENABLED = os.environ.get("THOUGHTMAP_NER_ENABLED", "true").lower() == "true"
-NER_SPACY_MODEL = os.environ.get("THOUGHTMAP_NER_SPACY_MODEL", "xx_ent_wiki_sm")
-NER_MIN_MENTIONS = int(os.environ.get("THOUGHTMAP_NER_MIN_MENTIONS", "2"))
-NER_ENTITY_TYPES = {"PERSON", "ORG", "GPE", "PRODUCT", "WORK_OF_ART", "LOC"}
-NER_CACHE_FILE = DATA_DIR / "entities_cache.json"
-ENTITIES_DIR = OUTPUT_DIR / "entities"
-```
-
-Add to `.env.example`:
-
-```env
-# Named Entity Recognition
-# THOUGHTMAP_NER_ENABLED=true
-# THOUGHTMAP_NER_SPACY_MODEL=xx_ent_wiki_sm
-# THOUGHTMAP_NER_MIN_MENTIONS=2
-```
-
-### Dependencies
-
-Add to `requirements.txt`:
-```
-spacy>=3.7.0
-```
-
-Add to `Dockerfile` (after `pip install`):
-```dockerfile
-RUN python -m spacy download xx_ent_wiki_sm
-```
-
-### Tasks
-
-| # | Task | File(s) | Acceptance Criteria |
-|---|------|---------|-------------------|
-| 3.1 | Add NER config vars | `config.py` | `NER_ENABLED`, `NER_SPACY_MODEL`, `NER_MIN_MENTIONS`, `NER_ENTITY_TYPES`, `NER_CACHE_FILE`, `ENTITIES_DIR` exist |
-| 3.2 | Add `.env.example` entries | `.env.example` | NER env vars documented |
-| 3.3 | Add `spacy` to requirements | `requirements.txt` | `spacy>=3.7.0` present |
-| 3.4 | Add spaCy model download to Dockerfile | `Dockerfile` | `RUN python -m spacy download xx_ent_wiki_sm` after pip install |
-| 3.5 | Create `analysis/ner.py` | `analysis/ner.py` | Module exists with functions listed below |
-| 3.5a | — `load_cache()` | | Returns `dict` from `entities_cache.json`, empty dict if missing |
-| 3.5b | — `save_cache(cache)` | | Writes `entities_cache.json` atomically |
-| 3.5c | — `normalize_entity(name)` | | Lowercase, strip diacritics, collapse whitespace |
-| 3.5d | — `build_regex_patterns(cache)` | | Returns compiled regex patterns for all cached entities |
-| 3.5e | — `regex_scan(chunks, patterns)` | | Returns `dict[normalized_name, list[chunk_indices]]` |
-| 3.5f | — `spacy_extract(chunks, already_matched)` | | Runs spaCy on chunks NOT matched by regex. Returns new entities |
-| 3.5g | — `deduplicate(entities)` | | Merge by normalized name, substring, Levenshtein |
-| 3.5h | — `summarize_entity(entity, chunks)` | | Ollama 2-3 sentence summary. Reuse condense.py pattern |
-| 3.5i | — `generate_entity_notes(entities, output_dir)` | | Write per-entity markdown + `_entity-index.md` |
-| 3.5j | — `extract_entities(result, items, on_status)` | | Main entry point. Orchestrates all above steps. Returns `list[Entity]` |
-| 3.6 | Add NER step to `run.py` | `run.py` | After condense, before report. Guarded by `config.NER_ENABLED` |
-| 3.7 | Add entity section to report | `report.py` | REPORT.md includes entity count + top entities table |
-| 3.8 | Verify: run pipeline | Terminal | `entities/` folder created with at least 1 entity note |
-| 3.9 | Verify: cache works | Terminal | Second run skips spaCy for known entities, uses regex |
-| 3.10 | Verify: entity notes | File check | Notes have valid frontmatter, summary, cluster table, source files |
-
-### Gotchas
-
-- **spaCy model size**: `xx_ent_wiki_sm` is ~15MB, `en_core_web_sm` is ~12MB but English-only. The content is mixed PL+EN; `xx_ent_wiki_sm` handles multilingual better.
-- **Ollama rate limiting**: Don't fire all entity summaries in parallel. Use sequential calls like `condense.py` does.
-- **Existing `python-Levenshtein`**: Already in `requirements.txt` — reuse for fuzzy dedup.
-- **Entity types**: spaCy labels differ from our output types. Map: `PER/PERSON → person`, `ORG → organization`, `GPE/LOC → location`, `PRODUCT → tool`, `WORK_OF_ART → project`.
-- **Short entity names**: Filter out single-character entities and common words (stop words).
-- **Cache file location**: `data/entities_cache.json` — persisted in Docker volume, survives container rebuilds.
-
-### Performance Estimate
-
-- **Regex scan**: Fast, ~1-2 seconds for 8000+ chunks
-- **spaCy extraction**: ~30-60 seconds for 8000 chunks (first run, no cache)
-- **Ollama summaries**: ~1-2 min per entity × N entities. If 50 entities → ~50-100 min. Consider batching or `NER_MIN_MENTIONS` filter
-- **Subsequent runs**: Regex handles known entities instantly. spaCy only runs on genuinely new chunks
-
----
-
-## Feature 4: jointhubs-os Agent
-
-### Goal
-
-Create a VS Code Copilot agent specialized in deep work sessions with the jointhubs-os repository. The agent understands the repo structure, manages knowledge across notes, and maintains context between sessions.
-
-### Agent Definition File
-
-**Path**: `.github/agents/jointhubs-os.agent.md`
-
-### Agent Capabilities
-
-| Capability | Description |
-|-----------|-------------|
-| **Repo awareness** | Knows full structure: Second Brain, agents, skills, instructions, automation |
-| **Multi-source data** | Understands 3 note sources: Second Brain (repo), Obsidian Vault (separate, optional), Wispr Flow (dictation, optional) |
-| **Graphify navigation** | Reads `graphify-out/GRAPH_REPORT.md` for entity-relationship context per project |
-| **ThoughtMap MCP** | Uses `search_thoughts`, `list_clusters`, `get_cluster` for semantic search |
-| **Knowledge management** | Decides: update existing note vs create new one. Maintains wikilinks between notes |
-| **Review awareness** | Checks daily reviews (`Personal/daily/`), weekly reviews (`Operations/weekly-reviews/`), project CONTEXT.md |
-| **Contact awareness** | Cross-references `peers/` with NER-discovered entities |
-| **Session continuity** | Reads daily log at session start, logs insights at session end |
-
-### Session Workflow
-
-```
-1. Session Start
-   ├── Read today's daily note (if exists)
-   ├── Check last 2-3 daily reviews
-   ├── Check last weekly review
-   └── Ask user: "What are we working on today?"
-
-2. Context Loading
-   ├── User says: "pracujmy nad fenix"
-   ├── Read: fenix/CONTEXT.md
-   ├── Read: fenix/graphify-out/GRAPH_REPORT.md
-   ├── Search ThoughtMap: search_thoughts("fenix")
-   └── Present: key state, open questions, recent activity
-
-3. Deep Work
-   ├── Answer questions from knowledge base
-   ├── Find cross-project connections
-   ├── Surface relevant notes user may have forgotten
-   └── Propose: "This relates to note X — should I link it?"
-
-4. Knowledge Capture
-   ├── Update project CONTEXT.md if decisions made
-   ├── Create new notes for topics that grew > 3 paragraphs
-   ├── Add wikilinks between related notes
-   └── Propose daily log entry
-
-5. Contact Management (when people mentioned)
-   ├── Check peers/ for existing info
-   ├── Check entities/person/ for NER-discovered context
-   └── Suggest updates if new info learned
-
-6. Session End
-   ├── Summarize decisions and insights
-   ├── Suggest daily log additions
-   └── Propose tomorrow's focus
-```
-
-### Tools
-
-```yaml
-tools:
-  - vscode          # File operations, workspace awareness
-  - execute         # Run scripts, CLI commands
-  - read            # File reading
-  - edit            # File editing
-  - search          # Semantic and text search
-  - agent           # Delegate to sub-agents (Tech Lead, Planner, etc.)
-  - thoughtmap/*    # ThoughtMap MCP (search_thoughts, list_clusters, etc.)
-  - todo            # Task management
-```
-
-### Skills to Reference
-
-- `.github/skills/obsidian-vault/` — Vault conventions
-- `.github/skills/obsidian-markdown/` — Markdown syntax
-- `.github/skills/project-context/` — CONTEXT.md lifecycle
-- `.github/skills/daily-log/` — Daily log format
-- `.github/skills/weekly-review/` — Weekly review process
-- `.github/skills/thoughtmap/` — ThoughtMap pipeline and MCP tools
-- `.github/skills/agentic-engineering/` — System architecture
-
-### Handoffs
-
-| To | When |
-|----|------|
-| **Tech Lead** | Implementation work, debugging, code architecture |
-| **Planner** | Day/week planning, prioritization |
-| **Journal** | Deep reflection, pattern synthesis |
-| **Investor** | Financial analysis, stock research |
-| **Agent M** | Need Mateusz's voice/perspective for decisions |
-
-### Tasks
-
-| # | Task | File(s) | Acceptance Criteria |
-|---|------|---------|-------------------|
-| 4.1 | Create agent file | `.github/agents/jointhubs-os.agent.md` | Valid YAML frontmatter + full personality + workflow sections |
-| 4.2 | Create ThoughtMap instructions | `.github/instructions/thoughtmap.instructions.md` | `applyTo: Second Brain/Projects/thoughtmap/**`, import conventions documented |
-| 4.3 | Update assistant.instructions.md | `.github/instructions/assistant.instructions.md` | Mention ThoughtMap data sources (Obsidian Vault, Wispr Flow as optional) |
-| 4.4 | Verify: agent loads in Copilot | VS Code | Agent appears in Copilot Chat agent list, responds to context queries |
-
----
-
-## Feature 5: Contact Discovery (NER-driven)
-
-### Goal
-
-Let the NER pipeline (Feature 3) automatically discover person entities. The `peers/` directory stays unchanged — agents cross-reference both sources.
-
-### Approach
-
-- **No migration** — `peers/` stays as-is with manually maintained contact notes
-- **NER pipeline** generates `entities/person/` automatically from ALL chunks
-- **jointhubs-os agent** cross-references both: `peers/` (manual) + `entities/person/` (auto-discovered)
-- Over time, NER entities become richer than hand-maintained data
-
-### Prerequisites
-
-- Feature 3 (NER) must be complete
-- Feature 4 (agent) must know about both directories
-
-### Tasks
-
-| # | Task | File(s) | Acceptance Criteria |
-|---|------|---------|-------------------|
-| 5.1 | Verify peers/ in extraction scope | `core/extract.py`, `config.py` | `peers/` is NOT in `SECOND_BRAIN_EXCLUDE_DIRS` |
-| 5.2 | Verify NER person entities | `entities/person/` | At least some person entities generated from pipeline |
-| 5.3 | Agent cross-reference instructions | `.github/agents/jointhubs-os.agent.md` | Agent knows to check both `peers/` and `entities/person/` |
-| 5.4 | Verify: entity note links to source | Entity markdown | `Source Files` section includes peer note paths when applicable |
-
----
-
-## Implementation Order
-
-```
-Feature 1 (Folder Reorg) ──→ Feature 3 (NER) ──→ Feature 5 (Contacts)
-                         ╲                     ╱
-Feature 2 (README)        ╲──→ Feature 4 (Agent)
-```
-
-**Recommended sequence**:
-1. **Feature 1** first — establishes import conventions, unblocks Feature 3
-2. **Feature 2** in parallel — independent, can be done anytime
-3. **Feature 3** after Feature 1 — needs `analysis/ner.py` in new structure
-4. **Feature 4** after Features 1-2 — needs to reference final structure
-5. **Feature 5** after Features 3-4 — verification only, depends on NER output + agent
-
-### Time Estimates (approximate)
-
-| Feature | Effort | Bottleneck |
-|---------|--------|------------|
-| 1. Folder Reorg | 2-3 hours | Careful import updates + testing |
-| 2. README | 30 min | Copywriting |
-| 3. NER | 4-6 hours | `ner.py` implementation + Ollama prompt tuning |
-| 4. Agent | 1-2 hours | Agent personality + workflow design |
-| 5. Contacts | 30 min | Verification only |
-
----
-
-## Verification Checklist
-
-### After Feature 1
-- [ ] `docker compose up -d --build` — container builds successfully
-- [ ] Pipeline runs: `Invoke-RestMethod http://localhost:8585/api/status` → `phase: done`
-- [ ] Graph renders at `http://localhost:8585/`
-- [ ] Import test: `python -c "from thoughtmap.core.extract import extract_all; from thoughtmap.analysis.condense import condense; from thoughtmap.web.server import serve; print('OK')"`
-- [ ] `git status` shows renames, not delete+create
-
-### After Feature 3
-- [ ] `entities/` directory created in `thoughtmap-out/`
-- [ ] At least 1 person, 1 org, 1 project entity discovered
-- [ ] `entities.json` is valid JSON with all entities
-- [ ] `_entity-index.md` has summary table
-- [ ] Individual entity notes have valid frontmatter
-- [ ] `data/entities_cache.json` exists after first run
-- [ ] Second pipeline run: spaCy skipped for cached entities (check logs)
-- [ ] REPORT.md includes entity summary section
-
-### After Feature 4
-- [ ] Agent appears in VS Code Copilot Chat picker
-- [ ] Agent loads project context when asked "co wiesz o fenix?"
-- [ ] Agent references graphify output
-- [ ] Agent uses ThoughtMap MCP search
-- [ ] Agent checks daily/weekly reviews at session start
-
-### After Feature 5
-- [ ] Agent cross-references `peers/` with `entities/person/`
-- [ ] NER discovers at least some names present in `peers/` independently
-- [ ] `peers/` directory unchanged (no files moved or deleted)
-
----
-
-## Appendix: Existing Code Patterns to Follow
-
-### Ollama Call Pattern (from `condense.py`)
-
-```python
-resp = requests.post(
-    f"{config.OLLAMA_BASE_URL}/api/generate",
-    json={
-        "model": config.CONDENSE_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "think": False,
-        "options": {"temperature": 0.3, "num_predict": 200},
-    },
-    timeout=120,
-)
-resp.raise_for_status()
-return resp.json().get("response", "").strip()
-```
-
-### Status Callback Pattern (from `run.py`)
-
-```python
-def status(msg: str):
-    print(msg)
-    if on_status:
-        on_status(msg)
-
-status("[8/9] Extracting named entities...")
-```
-
-### Pipeline Step Pattern (from `run.py`)
-
-```python
-# ─── Step N: NER ───
-if config.NER_ENABLED:
-    status(f"[{step}/{total}] Extracting named entities...")
-    t0 = time.time()
-    entities = extract_entities(result, items, on_status=status)
-    status(f"  Found {len(entities)} entities in {time.time() - t0:.1f}s")
-else:
-    status(f"[{step}/{total}] NER disabled — skipping")
-    entities = []
-```
-
-### TextSegment / Chunk Dataclass Pattern
-
-```python
-@dataclass
-class Entity:
-    name: str
-    type: str
-    aliases: list[str]
-    normalized: str
-    cluster_ids: list[int]
-    source_files: list[str]
-    mention_count: int
-    summary: str
-    first_seen: str
-```
+### Compatibility
+
+- Existing `Chunk` can remain as the embedding unit.
+- `Chunk` should reference `atom_id` and `parent_segment_id`.
+- Existing NER can be kept as a candidate source during migration.
+- Existing Kanban curation should be preserved and extended, not removed.
+
+## 13. Phased Implementation
+
+### Phase 1 — Prototype Thought Atoms
+
+Scope:
+
+- Add `ThoughtAtom` model and `thought_atoms.json` output.
+- Run segmentation on a limited sample: daily notes, reviews, Wispr entries.
+- Keep existing Chroma/cluster pipeline unchanged.
+
+Acceptance:
+
+- 10 mixed daily/review segments produce plausible atoms.
+- Atoms preserve source links and timestamps.
+- JSON output is inspectable and stable across reruns for unchanged sources.
+
+### Phase 2 — Structured Routing
+
+Scope:
+
+- Add signal/domain/index classification.
+- Produce `routing_report.json`.
+- Exclude boilerplate/generated artifacts from semantic embedding in a dry-run mode.
+
+Acceptance:
+
+- Report shows counts by source, signal type, domain, and target.
+- Exclusion decisions are reviewable before pruning Chroma.
+
+### Phase 3 — Entity Registry MVP
+
+Scope:
+
+- Add `entity_registry.json`.
+- Apply verified/rejected/alias/retype/merge decisions before entity output generation.
+- Generate `ThoughtMap Entity Curation.md`.
+
+Acceptance:
+
+- Rejected entities stay rejected across reruns.
+- Aliases and canonical names affect generated entity notes.
+- Entity index has visibly fewer false positives.
+
+### Phase 4 — Semantic Store Migration
+
+Scope:
+
+- Embed semantic atoms instead of raw chunks.
+- Add active manifest.
+- Add Chroma prune/rebuild command.
+
+Acceptance:
+
+- Chroma active count aligns with active manifest.
+- Clusters become more coherent for mixed daily notes.
+- Generated output directories are excluded from ingestion.
+
+### Phase 5 — Full Curation Loop
+
+Scope:
+
+- Add Segment, Domain, and Entity curation boards.
+- Sync board changes into curation JSON.
+- Apply curation before each run.
+
+Acceptance:
+
+- Manual board decisions affect next pipeline run.
+- Generated outputs do not overwrite manual truth.
+- Curation report lists applied decisions.
+
+### Phase 6 — Local Model Optimization
+
+Scope:
+
+- Build a simple annotation/data-preparation UI and queue before training.
+- Build JSONL dataset builders from curation boards, entity registry, ThoughtAtoms, and source snippets.
+- Establish baselines for entity typing, routing, summarization, and vector narration.
+- Train the first optional small model: Entity Type Resolver.
+- Add config gates for local fine-tuned models without making them required.
+- Prepare Vec2Text training data only after the embedding model and active Chroma manifest are stable.
+
+Acceptance:
+
+- `data/annotations/` contains durable task and user-label records.
+- `ThoughtMap Annotation Queue.md` exposes pending labels as reviewable work.
+- The web annotation surface supports at least entity type resolution with constrained editable fields.
+- `data/training/` contains deterministic train/eval splits.
+- Hard negatives are tagged for entity type confusions.
+- Fine-tuned model metrics are compared against rule and generic-prompt baselines.
+- Runtime falls back to deterministic rules and curation if the model is unavailable or invalid.
+- See [Model Optimization and Fine-Tuning Plan](docs/model-optimization-finetuning-plan.md) and [Annotation and Data Preparation Framework](docs/annotation-data-preparation-framework.md) for the detailed roadmap.
+
+## 14. Success Metrics
+
+Quality metrics:
+
+- Fewer false-positive entities in `_entity-index.md`.
+- Higher cluster coherence for daily/review content.
+- Lower share of `unclassified` and `misc` atoms.
+- Lower boilerplate/generated-output presence in semantic clusters.
+
+Operational metrics:
+
+- Active Chroma item count stabilizes or grows slowly.
+- Reruns are incremental and explain what changed.
+- Manual rejections persist across reruns.
+- Curation workload stays small enough for daily/weekly review.
+
+Suggested first benchmark:
+
+- Sample 20 mixed daily/review sections.
+- Compare current chunk output vs ThoughtAtom output.
+- Manually score topic purity, entity precision, and routing correctness.
+
+## 15. Risks
+
+| Risk | Mitigation |
+|---|---|
+| LLM segmentation hallucinates structure | Preserve original text spans and source offsets; fail to review on invalid output. |
+| Too much manual curation overhead | Only surface uncertain/high-impact candidates; auto-accept high-confidence low-risk cases. |
+| Registry becomes complex | Start with entity registry only; add segment/domain curation after routing works. |
+| Chroma prune deletes useful context | Dry-run prune first; keep cold archive and rebuild command. |
+| Domain labels drift over time | Keep domain registry and allow manual aliases/merges. |
+| Runtime becomes slow | Gate LLM segmentation by segment length/mixed-domain heuristics; cache structured outputs by source hash. |
+| Fine-tuned models memorize private notes | Keep training data/adapters local, document training sources, and avoid uploading adapters by default. |
+| Fine-tuned model output looks confident but wrong | Apply manual registry first, schema-validate outputs, and route uncertain cases to curation. |
+| Generated artifacts are mistaken for truth | Treat ThoughtMap output as candidate/proposal data; require user annotation or registry confirmation for gold labels. |
+| Cloud preannotation leaks private notes | Make Gemini/OpenAI preannotation explicit opt-in, record provider/model, and default to local models for private content. |
+
+## 16. Open Questions
+
+- What confidence threshold should auto-route a ThoughtAtom into the semantic index?
+- Should communication atoms be embedded in a separate collection or kept as JSON-only activity data?
+- Should entity registry live under `data/curation/` or in `Second Brain/Operations/thoughtmap-out/curation/`?
+- Should ThoughtAtom text preserve exact original text, or allow minimal cleanup before embedding?
+- How often should cold storage be compacted or archived?
+- Should accepted domains be curated as a flat registry first, before any deeper taxonomy work?
+- Which small local model should be the first fine-tuning target: Entity Type Resolver or Atomizer / Router?
+- Should entity typing use a decoder LoRA model or a cheaper encoder classifier?
+- How much curated gold data is enough before training the first production adapter?
+- What is the minimum annotation UI needed before the first dataset export?
+- Which annotation task types should be cloud-preannotation eligible, and which must remain local-only?
+
+## 17. Immediate Next Step
+
+Build a read-only prototype that writes `thought_atoms.json` and `routing_report.json` from 10-20 recent daily/review/Wispr segments without changing Chroma. Use this to validate segmentation quality before migrating the production embedding pipeline.

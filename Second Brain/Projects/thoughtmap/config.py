@@ -21,13 +21,25 @@ DATA_DIR = Path(os.environ.get(
     "THOUGHTMAP_DATA_DIR",
     str(Path(__file__).resolve().parent / "data"),
 ))
+CURATION_DIR = DATA_DIR / "curation"
 CHROMA_DIR = DATA_DIR / "chroma"
 CACHE_DIR = DATA_DIR / "cache"
+
+
+def _default_obsidian_vault() -> Path:
+    return Path.home() / "Documents" / "Obsidian Vault"
+
+
+def _default_wispr_db() -> Path:
+    appdata_dir = os.environ.get("APPDATA")
+    if appdata_dir:
+        return Path(appdata_dir) / "Wispr Flow" / "flow.sqlite"
+    return Path.home() / "AppData" / "Roaming" / "Wispr Flow" / "flow.sqlite"
 
 # ─── Data source paths (env-overridable for Docker) ───
 OBSIDIAN_VAULT = Path(os.environ.get(
     "THOUGHTMAP_OBSIDIAN_VAULT",
-    r"C:\Users\mateu\Documents\Obsidian Vault",
+    str(_default_obsidian_vault()),
 ))
 OBSIDIAN_DAILY = Path(os.environ.get(
     "THOUGHTMAP_OBSIDIAN_DAILY",
@@ -39,11 +51,55 @@ JOINTHUBS_DAILY = Path(os.environ.get(
 ))
 WISPR_DB = Path(os.environ.get(
     "THOUGHTMAP_WISPR_DB",
-    r"C:\Users\mateu\AppData\Roaming\Wispr Flow\flow.sqlite",
+    str(_default_wispr_db()),
 ))
 SECOND_BRAIN_DIR = Path(os.environ.get(
     "THOUGHTMAP_SECOND_BRAIN_DIR",
     str(REPO_ROOT / "Second Brain"),
+))
+REVIEWS_DIR = Path(os.environ.get(
+    "THOUGHTMAP_REVIEWS_DIR",
+    str(SECOND_BRAIN_DIR / "Operations" / "Reviews"),
+))
+PEERS_DIR = Path(os.environ.get(
+    "THOUGHTMAP_PEERS_DIR",
+    str(SECOND_BRAIN_DIR / "Personal" / "peers"),
+))
+KANBAN_DIR = Path(os.environ.get(
+    "THOUGHTMAP_KANBAN_DIR",
+    str(SECOND_BRAIN_DIR / "Operations" / "Kanban"),
+))
+KANBAN_INTAKE_PATH = Path(os.environ.get(
+    "THOUGHTMAP_KANBAN_INTAKE_PATH",
+    str(KANBAN_DIR / "ThoughtMap Intake.md"),
+))
+KANBAN_TASKS_PATH = Path(os.environ.get(
+    "THOUGHTMAP_KANBAN_TASKS_PATH",
+    str(OUTPUT_DIR / "kanban_tasks.json"),
+))
+KANBAN_CURATION_PATH = Path(os.environ.get(
+    "THOUGHTMAP_KANBAN_CURATION_PATH",
+    str(OUTPUT_DIR / "kanban_curation.json"),
+))
+ENTITY_REGISTRY_PATH = Path(os.environ.get(
+    "THOUGHTMAP_ENTITY_REGISTRY_PATH",
+    str(CURATION_DIR / "entity_registry.json"),
+))
+ENTITY_CURATION_BOARD_PATH = Path(os.environ.get(
+    "THOUGHTMAP_ENTITY_CURATION_BOARD_PATH",
+    str(KANBAN_DIR / "ThoughtMap Entity Curation.md"),
+))
+SEGMENT_CURATION_BOARD_PATH = Path(os.environ.get(
+    "THOUGHTMAP_SEGMENT_CURATION_BOARD_PATH",
+    str(KANBAN_DIR / "ThoughtMap Segment Curation.md"),
+))
+DOMAIN_CURATION_BOARD_PATH = Path(os.environ.get(
+    "THOUGHTMAP_DOMAIN_CURATION_BOARD_PATH",
+    str(KANBAN_DIR / "ThoughtMap Domain Curation.md"),
+))
+CURATION_REPORT_PATH = Path(os.environ.get(
+    "THOUGHTMAP_CURATION_REPORT_PATH",
+    str(OUTPUT_DIR / "curation_report.md"),
 ))
 
 # ─── Date filter ───
@@ -73,11 +129,18 @@ CHUNK_MIN_TOKENS = 40           # Minimum chunk size (smaller → discard)
 CHUNK_OVERLAP_SENTENCES = 2     # Overlap between chunks in sentences
 MERGE_SIMILARITY_THRESHOLD = 0.85  # Cosine similarity above which chunks merge
 
+# ─── ThoughtAtom migration ───
+# Keep the production pipeline on v1 chunking until ThoughtAtom quality has
+# been reviewed through the prototype and curation workflow.
+ENABLE_ATOM_PIPELINE = os.environ.get("THOUGHTMAP_ENABLE_ATOM_PIPELINE", "false").lower() == "true"
+
 # ─── Embedding ───
 EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "ollama")  # "ollama" | "openai" | "google"
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:8b")
+OLLAMA_EMBED_BATCH_SIZE = int(os.environ.get("THOUGHTMAP_OLLAMA_EMBED_BATCH_SIZE", "8"))
+OLLAMA_EMBED_CONCURRENCY = int(os.environ.get("THOUGHTMAP_OLLAMA_EMBED_CONCURRENCY", "2"))
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
@@ -133,6 +196,36 @@ SUPER_CLUSTER_MIN_SIZE = int(os.environ.get(
     "THOUGHTMAP_SUPER_CLUSTER_MIN_SIZE", "3",
 ))  # minimum clusters per super-cluster
 TOPICS_DIR = OUTPUT_DIR / "topics"
+
+# ─── Semantic layers ───
+GLOSSARY_PATH = Path(os.environ.get(
+    "THOUGHTMAP_GLOSSARY_PATH",
+    str(OUTPUT_DIR / "glossary.json"),
+))
+TAXONOMY_PATH = Path(os.environ.get(
+    "THOUGHTMAP_TAXONOMY_PATH",
+    str(OUTPUT_DIR / "taxonomy.json"),
+))
+TOPOLOGY_PATH = Path(os.environ.get(
+    "THOUGHTMAP_TOPOLOGY_PATH",
+    str(OUTPUT_DIR / "topology.json"),
+))
+ONTOLOGY_PATH = Path(os.environ.get(
+    "THOUGHTMAP_ONTOLOGY_PATH",
+    str(OUTPUT_DIR / "ontology.json"),
+))
+SEMANTIC_ENTITY_EDGE_MIN = float(os.environ.get(
+    "THOUGHTMAP_SEMANTIC_ENTITY_EDGE_MIN",
+    "0.34",
+))
+ONTOLOGY_ENTITY_EDGE_MIN = float(os.environ.get(
+    "THOUGHTMAP_ONTOLOGY_ENTITY_EDGE_MIN",
+    "0.42",
+))
+ONTOLOGY_MAX_TRIPLES = int(os.environ.get(
+    "THOUGHTMAP_ONTOLOGY_MAX_TRIPLES",
+    "400",
+))
 
 # ─── Named Entity Recognition ───
 NER_ENABLED = os.environ.get("THOUGHTMAP_NER_ENABLED", "true").lower() == "true"

@@ -1029,6 +1029,35 @@ def deduplicate(entities: list[Entity]) -> list[Entity]:
     return merged
 
 
+def _load_kanban_entity_alias_overrides() -> dict[str, dict]:
+    """Load manual entity overrides harvested from ThoughtMap Intake curation."""
+    path = getattr(config, "KANBAN_CURATION_PATH", None)
+    if path is None or not path.exists():
+        return {}
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload.get("entity_alias_overrides", {}) or {}
+
+
+def _apply_manual_entity_overrides(entities: list[Entity]) -> list[Entity]:
+    """Promote user-curated intake renames into canonical entity names and aliases."""
+    try:
+        from thoughtmap.analysis.entities.registry import (
+            apply_kanban_alias_overrides_to_registry,
+            load_entity_registry,
+        )
+        from thoughtmap.analysis.entities.resolve import apply_manual_entity_decisions
+    except Exception:
+        return entities
+
+    registry = load_entity_registry()
+    registry = apply_kanban_alias_overrides_to_registry(registry, _load_kanban_entity_alias_overrides())
+    return apply_manual_entity_decisions(entities, registry)
+
+
 def _combined_alias_pattern(entity: Entity) -> re.Pattern[str]:
     alias_patterns = []
     for alias in [entity.name, *entity.aliases]:
@@ -1733,6 +1762,8 @@ def extract_entities(
 
     status(f"  Deduplicating {len(candidates)} entity candidates...")
     entities = deduplicate(candidates)
+    status("  Applying manual entity overrides from ThoughtMap Intake curation...")
+    entities = _apply_manual_entity_overrides(entities)
     status(f"  Enriching {len(entities)} deduplicated entities...")
     _enrich_entities(entities, result, items)
 

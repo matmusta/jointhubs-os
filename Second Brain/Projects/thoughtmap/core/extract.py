@@ -14,30 +14,11 @@ import os
 import re
 import shutil
 import sqlite3
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import thoughtmap.config as config
-
-
-@dataclass
-class TextSegment:
-    """A raw text segment extracted from a source, before chunking."""
-    text: str
-    timestamp: datetime
-    source: str          # "obsidian-daily" | "obsidian-root" | "jointhubs-review" | "wispr-flow"
-    source_file: str     # file path or "wispr:transcriptEntityId"
-    section: str | None = None  # "logs" | "dziennik" | None
-    project_tag: str | None = None  # extracted #tag if present
-    language: str | None = None
-    # Wispr-specific metadata
-    wispr_app: str | None = None
-    wispr_duration: float | None = None
-    wispr_word_count: int | None = None
-    # Classification (set after matching)
-    intent: str | None = None      # "note" (matched in Obsidian) or None
-    category: str | None = None    # "coding" | "browsing" | "communication" | "note-taking" | "general"
+from thoughtmap.core.models import TextSegment
 
 
 def extract_all() -> list[TextSegment]:

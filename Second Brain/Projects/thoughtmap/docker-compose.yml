@@ -15,10 +15,15 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: thoughtmap-ollama
-    # No host port mapping — only reachable from the thoughtmap container.
-    # If you need host access too, add: ports: ["11435:11434"]
+    ports:
+      - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama
+    environment:
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-2}"
+      OLLAMA_MAX_LOADED_MODELS: "${OLLAMA_MAX_LOADED_MODELS:-1}"
+      OLLAMA_FLASH_ATTENTION: "${OLLAMA_FLASH_ATTENTION:-1}"
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-30m}"
     deploy:
       resources:
         reservations:
@@ -62,6 +67,10 @@ services:
       THOUGHTMAP_OUTPUT_DIR: /app/output
       THOUGHTMAP_DATA_DIR: /app/data
       THOUGHTMAP_PORT: "8585"
+      THOUGHTMAP_ENABLE_ATOM_PIPELINE: "${THOUGHTMAP_ENABLE_ATOM_PIPELINE:-false}"
+      THOUGHTMAP_OLLAMA_EMBED_BATCH_SIZE: "${THOUGHTMAP_OLLAMA_EMBED_BATCH_SIZE:-8}"
+      THOUGHTMAP_OLLAMA_EMBED_CONCURRENCY: "${THOUGHTMAP_OLLAMA_EMBED_CONCURRENCY:-2}"
+      EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-1024}"
     ports:
       - "8585:8585"
     restart: unless-stopped

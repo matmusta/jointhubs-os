@@ -124,11 +124,23 @@ poll();
 class ThoughtMapHandler(SimpleHTTPRequestHandler):
     """Serves loading page during pipeline, then the visualization."""
 
+    _spa_routes = {
+        "/",
+        "/index.html",
+        "/entities",
+        "/glossary",
+        "/taxonomy",
+        "/echoes",
+        "/annotate",
+    }
+
     def __init__(self, *args, output_dir: str, **kwargs):
         self._output_dir = output_dir
         super().__init__(*args, directory=output_dir, **kwargs)
 
     def do_GET(self):
+        request_path = urlparse(self.path).path
+
         # Status API endpoint
         if self.path == "/api/status":
             with _state_lock:
@@ -185,8 +197,28 @@ class ThoughtMapHandler(SimpleHTTPRequestHandler):
             self._handle_directories()
             return
 
+        # Echoes list API
+        if self.path == "/api/echoes" or self.path.startswith("/api/echoes?"):
+            self._handle_echoes_list()
+            return
+
+        # Annotation UI — serve standalone HTML page
+        if request_path == "/annotate":
+            self._handle_annotation_ui()
+            return
+
+        # Annotation tasks API
+        if self.path == "/api/annotations/tasks" or self.path.startswith("/api/annotations/tasks?"):
+            self._handle_annotation_tasks()
+            return
+
+        # Annotation stats API
+        if self.path == "/api/annotations/stats":
+            self._handle_annotation_stats()
+            return
+
         # Root path
-        if self.path in ("/", "/index.html"):
+        if request_path in self._spa_routes:
             with _state_lock:
                 phase = _state["phase"]
 
@@ -219,6 +251,15 @@ class ThoughtMapHandler(SimpleHTTPRequestHandler):
             return
         if self.path == "/api/query":
             self._handle_query()
+            return
+        if self.path.startswith("/api/echoes/"):
+            self._handle_echo_catalog()
+            return
+        if self.path.startswith("/api/annotations/tasks/"):
+            self._handle_annotation_save()
+            return
+        if self.path == "/api/annotations/generate":
+            self._handle_annotation_generate()
             return
         self.send_error(404)
 
@@ -690,6 +731,264 @@ class ThoughtMapHandler(SimpleHTTPRequestHandler):
                 "total": len(subset),
             })
 
+    def _handle_echoes_list(self):
+        """GET /api/echoes?min_size=5&min_sim=0.95&status=all|observe|discard|neutral
+
+        Returns near-duplicate thought groups merged with catalog state.
+        """
+        from thoughtmap.analysis.echoes import load_catalog
+
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        try:
+            min_size = max(2, int(params.get("min_size", ["5"])[0]))
+        except ValueError:
+            min_size = 5
+        try:
+            min_sim = float(params.get("min_sim", ["0"])[0])
+        except ValueError:
+            min_sim = 0.0
+        status_filter = params.get("status", ["all"])[0].lower()
+
+        echoes_path = Path(self._output_dir) / "echoes.json"
+        if not echoes_path.exists():
+            self._json_response({
+                "echoes": [],
+                "count": 0,
+                "threshold": None,
+                "min_group_size": None,
+                "message": "echoes.json not found — run the pipeline first",
+            })
+            return
+
+        with open(echoes_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        catalog = load_catalog()
+        groups = payload.get("echoes", [])
+        merged = []
+        for g in groups:
+            if g["size"] < min_size:
+                continue
+            if g.get("min_similarity", 0) < min_sim:
+                continue
+            entry = catalog.get(g["echo_key"], {})
+            status_value = entry.get("status", "neutral")
+            if status_filter != "all" and status_value != status_filter:
+                continue
+            merged.append({
+                **g,
+                "status": status_value,
+                "note": entry.get("note", ""),
+                "catalog_updated": entry.get("updated"),
+            })
+
+        self._json_response({
+            "echoes": merged,
+            "count": len(merged),
+            "total": len(groups),
+            "threshold": payload.get("threshold"),
+            "min_group_size": payload.get("min_group_size"),
+            "generated_at": payload.get("generated_at"),
+            "filters": {"min_size": min_size, "min_sim": min_sim, "status": status_filter},
+        })
+
+    def _handle_echo_catalog(self):
+        """POST /api/echoes/<key> — set catalog status/note for a group."""
+        from thoughtmap.analysis.echoes import set_catalog_entry
+
+        try:
+            echo_key_val = self.path.split("/api/echoes/")[1].split("?")[0]
+        except IndexError:
+            self._json_response({"error": "Missing echo key"}, 400)
+            return
+        if not echo_key_val or len(echo_key_val) > 64:
+            self._json_response({"error": "Invalid echo key"}, 400)
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 20_000:
+            self._json_response({"error": "Payload too large"}, 413)
+            return
+        try:
+            body = json.loads(self.rfile.read(content_length) or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        status_value = str(body.get("status", "neutral")).lower()
+        note = body.get("note")
+        if note is not None:
+            note = str(note)[:2000]
+        try:
+            entry = set_catalog_entry(echo_key_val, status=status_value, note=note)
+        except ValueError as e:
+            self._json_response({"error": str(e)}, 400)
+            return
+        self._json_response({"ok": True, "echo_key": echo_key_val, "entry": entry})
+
+    # ── Annotation handlers ──────────────────────────────────────────────────
+
+    def _handle_annotation_ui(self):
+        """GET /annotate — serve the standalone annotation HTML page."""
+        html_path = Path(__file__).parent / "annotate.html"
+        if not html_path.exists():
+            self._json_response({"error": "annotate.html not found"}, 404)
+            return
+        content = html_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _handle_annotation_tasks(self):
+        """GET /api/annotations/tasks?status=pending&limit=50&offset=0 — list tasks."""
+        from thoughtmap.annotation.store import load_tasks, load_annotations
+
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        status_filter = params.get("status", ["all"])[0].lower()
+        try:
+            limit = min(int(params.get("limit", ["100"])[0]), 500)
+            offset = max(0, int(params.get("offset", ["0"])[0]))
+        except ValueError:
+            limit, offset = 100, 0
+
+        tasks = load_tasks()
+        annotations = load_annotations()
+
+        items = []
+        for tid, task in tasks.items():
+            ann = annotations.get(tid)
+            status = "annotated" if ann else "pending"
+            if status_filter != "all" and status != status_filter:
+                continue
+            entry = {**task, "status": status}
+            if ann:
+                entry["annotation"] = ann
+            items.append(entry)
+
+        # Uncertain types first, then by mention_count desc
+        items.sort(key=lambda t: (
+            0 if t.get("current_type") in {"location", "concept", "other"} else 1,
+            -(t.get("mention_count") or 0),
+        ))
+
+        total = len(items)
+        page = items[offset:offset + limit]
+        self._json_response({
+            "tasks": page,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        })
+
+    def _handle_annotation_stats(self):
+        """GET /api/annotations/stats — annotation progress summary."""
+        from thoughtmap.annotation.store import annotation_stats
+        self._json_response(annotation_stats())
+
+    def _handle_annotation_save(self):
+        """POST /api/annotations/tasks/<task_id> — save one annotation."""
+        from thoughtmap.annotation.store import save_annotation, load_tasks
+
+        try:
+            task_id = self.path.split("/api/annotations/tasks/")[1].split("?")[0]
+        except IndexError:
+            self._json_response({"error": "Missing task_id"}, 400)
+            return
+        if not task_id or len(task_id) > 64:
+            self._json_response({"error": "Invalid task_id"}, 400)
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 20_000:
+            self._json_response({"error": "Payload too large"}, 413)
+            return
+        try:
+            body = json.loads(self.rfile.read(content_length) or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        decision = str(body.get("decision", "")).strip().lower()
+        valid_decisions = {"verify", "reject", "retype", "merge", "alias", "unsure"}
+        if decision not in valid_decisions:
+            self._json_response(
+                {"error": f"decision must be one of: {', '.join(sorted(valid_decisions))}"},
+                400,
+            )
+            return
+
+        entity_type = body.get("entity_type")
+        if entity_type is not None:
+            entity_type = str(entity_type).strip().lower()
+            valid_types = {"person", "organization", "project", "tool", "location", "concept", "other"}
+            if entity_type not in valid_types:
+                self._json_response(
+                    {"error": f"entity_type must be one of: {', '.join(sorted(valid_types))}"},
+                    400,
+                )
+                return
+
+        canonical_name = body.get("canonical_name")
+        if canonical_name is not None:
+            canonical_name = str(canonical_name).strip()[:200]
+
+        reason = str(body.get("reason", "")).strip()[:500]
+
+        # Validate task exists
+        tasks = load_tasks()
+        if task_id not in tasks:
+            self._json_response({"error": f"Task '{task_id}' not found"}, 404)
+            return
+
+        record = save_annotation(
+            task_id=task_id,
+            decision=decision,
+            entity_type=entity_type,
+            canonical_name=canonical_name,
+            reason=reason,
+        )
+        self._json_response({"ok": True, "annotation": record})
+
+    def _handle_annotation_generate(self):
+        """POST /api/annotations/generate — generate tasks from entities.json."""
+        from thoughtmap.annotation.generate import generate_entity_tasks
+        from thoughtmap.annotation.store import upsert_tasks
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = {}
+        if content_length > 0:
+            try:
+                body = json.loads(self.rfile.read(min(content_length, 4096)) or b"{}")
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        min_mentions = max(1, int(body.get("min_mentions", 3)))
+        only_uncertain = bool(body.get("only_uncertain", False))
+
+        try:
+            tasks = generate_entity_tasks(
+                min_mentions=min_mentions,
+                only_uncertain=only_uncertain,
+            )
+            added = upsert_tasks(tasks)
+        except FileNotFoundError as e:
+            self._json_response({"error": str(e)}, 404)
+            return
+        except Exception as e:
+            self._json_response({"error": f"Generation failed: {e}"}, 500)
+            return
+
+        self._json_response({
+            "ok": True,
+            "generated": len(tasks),
+            "added": added,
+        })
+
     def log_message(self, format, *args):
         # Suppress noisy request logs; status polls are frequent
         if "/api/status" in str(args[0]):
@@ -742,21 +1041,12 @@ def _run_pipeline():
 
         # If we're already serving previous results, stay in "done" until
         # the pipeline actually needs to do heavy work (embedding).
-        # The status callback from run.py will update step info regardless.
-        with _state_lock:
-            already_serving = _state["phase"] == "done"
-
-        if not already_serving:
-            _set_state("running", "Running pipeline...", "Checking for new data...")
+        _set_state("running", "Running pipeline...", "Checking for new data...")
 
         def on_status(msg: str):
             with _state_lock:
                 _state["step"] = msg
-                # If embedding starts (step 3), switch to "running" even if
-                # we were serving previous results — user should see progress
-                if msg.startswith("[3/") and _state["phase"] == "done":
-                    _state["phase"] = "running"
-                    _state["message"] = "Updating with new data..."
+                _state["message"] = "Updating ThoughtMap output..."
 
         from thoughtmap.run import main
         result = main(on_status=on_status)
@@ -783,11 +1073,8 @@ def serve():
 
     has_previous = (config.OUTPUT_DIR / "thoughtmap-condensed.html").exists() or (config.OUTPUT_DIR / "thoughtmap.html").exists()
     if has_previous:
-        # Serve previous results immediately — don't show loading screen
-        _set_state("done", "Serving previous results", "")
-        print("Previous output found — serving immediately while checking for new data...")
+        print("Previous output found — running refresh in background.")
 
-    # Start pipeline in background (will skip embedding if no new data)
     pipeline_thread = threading.Thread(target=_run_pipeline, daemon=True)
     pipeline_thread.start()
 

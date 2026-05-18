@@ -22,11 +22,23 @@ def main(on_status: Callable[[str], None] | None = None):
     """
     import numpy as np
     import thoughtmap.config as config
-    from thoughtmap.analysis.condense import condense
+    from thoughtmap.analysis.condense import condense, write_condensed_visualization
+    from thoughtmap.analysis.curation import write_domain_curation_board, write_segment_curation_board
+    from thoughtmap.analysis.entities.registry import load_entity_registry
     from thoughtmap.analysis.index import generate_cluster_indices
+    from thoughtmap.analysis.kanban import generate_kanban_artifacts, sync_kanban_curation
     from thoughtmap.analysis.ner import extract_entities
     from thoughtmap.analysis.report import save_report
-    from thoughtmap.core.chunk import chunk_all, merge_similar_chunks
+    from thoughtmap.analysis.reports.curation_report import write_curation_report
+    from thoughtmap.analysis.semantic_layers import generate_semantic_artifacts
+    from thoughtmap.analysis.routing import route_atoms
+    from thoughtmap.analysis.storage_tiers import (
+        build_active_manifest,
+        build_prune_plan,
+        write_manifest,
+        write_prune_plan,
+    )
+    from thoughtmap.core.chunk import chunk_all, chunk_atoms
     from thoughtmap.core.cluster import cluster_all
     from thoughtmap.core.embed import (
         chunk_id as compute_chunk_id,
@@ -37,9 +49,10 @@ def main(on_status: Callable[[str], None] | None = None):
         store_chunks,
     )
     from thoughtmap.core.extract import extract_all
+    from thoughtmap.core.segment.deterministic import atomize_segments_deterministically
     from thoughtmap.web.viz import generate_viz
 
-    total_steps = 9
+    total_steps = 10
 
     def status(msg: str):
         print(msg)
@@ -66,14 +79,36 @@ def main(on_status: Callable[[str], None] | None = None):
     if not segments:
         raise RuntimeError("No segments found. Check your data source paths in config.py.")
 
-    # ─── Step 2: Chunk ───
-    status(f"[2/{total_steps}] Smart chunking...")
+    atoms = []
+    decisions = []
+    manifest = {"active_records": [], "cold_records": [], "counts": {}}
+
+    # ─── Step 2: Prepare embedding records ───
+    status(f"[2/{total_steps}] Preparing embedding records...")
     t0 = time.time()
-    chunks = chunk_all(segments)
-    status(f"  Produced {len(chunks)} chunks in {time.time() - t0:.1f}s")
+    if config.ENABLE_ATOM_PIPELINE:
+        atoms = atomize_segments_deterministically(segments)
+        decisions = route_atoms(atoms)
+        manifest = build_active_manifest(atoms, decisions)
+        semantic_atom_ids = {
+            record["atom_id"] for record in manifest.get("active_records", [])
+        }
+        semantic_atoms = [atom for atom in atoms if atom.atom_id in semantic_atom_ids]
+        chunks = chunk_atoms(semantic_atoms)
+        status(
+            f"  Atom pipeline enabled: {len(atoms)} thought atoms, "
+            f"{len(semantic_atoms)} semantic atoms, {len(chunks)} embedding records "
+            f"in {time.time() - t0:.1f}s"
+        )
+    else:
+        chunks = chunk_all(segments)
+        status(
+            f"  Atom pipeline disabled; using stable v1 chunking: "
+            f"{len(chunks)} chunks in {time.time() - t0:.1f}s"
+        )
 
     if not chunks:
-        raise RuntimeError("No chunks produced. All segments may have been too short.")
+        raise RuntimeError("No semantic chunks produced. Routing may have filtered everything out.")
 
     # ─── Check for new data ───
     status("Checking ChromaDB for existing chunks...")
@@ -100,38 +135,58 @@ def main(on_status: Callable[[str], None] | None = None):
                 pass
 
     new_ids = [cid for cid in all_ids if cid not in existing_ids]
-    status(f"  {existing_count} chunks in store, {len(new_ids)} new, {len(all_ids) - len(new_ids)} already stored")
+    status(f"  {existing_count} records in store, {len(new_ids)} new semantic records, {len(all_ids) - len(new_ids)} already stored")
 
     if new_ids:
-        # Filter to only the new chunks — no point embedding what we already have
+        # Filter to only the new semantic records — no point embedding what already exists
         new_indices = [id_to_idx[cid] for cid in new_ids]
         new_chunks = [chunks[i] for i in new_indices]
 
         # ─── Step 3: Embed (only new) ───
-        status(f"[3/{total_steps}] Embedding {len(new_chunks)} new chunks via {config.EMBEDDING_PROVIDER}:{config.EMBEDDING_MODEL}...")
+        status(f"[3/{total_steps}] Embedding {len(new_chunks)} new semantic records via {config.EMBEDDING_PROVIDER}:{config.EMBEDDING_MODEL}...")
         t0 = time.time()
         new_texts = [c.text for c in new_chunks]
         new_embeddings = embed_batch(new_texts)
         status(f"  Embedded in {time.time() - t0:.1f}s")
 
-        # ─── Step 4: Semantic merge (only new) ───
-        status(f"[4/{total_steps}] Merging semantically similar new chunks...")
+        # ─── Step 4: Active manifest and prune plan ───
+        status(f"[4/{total_steps}] Writing semantic manifest and prune dry-run...")
         t0 = time.time()
-        new_chunks, new_embeddings = merge_similar_chunks(
-            new_chunks, new_embeddings, threshold=config.MERGE_SIMILARITY_THRESHOLD
-        )
-        status(f"  After merge: {len(new_chunks)} new chunks ({time.time() - t0:.1f}s)")
+        if config.ENABLE_ATOM_PIPELINE:
+            prune_plan = build_prune_plan(manifest, collection.get(include=[]).get("ids", []))
+            manifest_path = write_manifest(manifest)
+            prune_plan_path = write_prune_plan(prune_plan)
+            status(
+                f"  Manifest: {manifest_path.name}; prune plan: {prune_plan_path.name} "
+                f"({time.time() - t0:.1f}s)"
+            )
+        else:
+            status(f"  Atom manifest skipped; v1 chunking remains active ({time.time() - t0:.1f}s)")
 
         # ─── Step 5: Store (only new) ───
-        status(f"[5/{total_steps}] Storing new chunks in ChromaDB...")
+        status(f"[5/{total_steps}] Storing new semantic records in ChromaDB...")
         added = store_chunks(new_chunks, new_embeddings)
-        status(f"  Added {added} new chunks to vector store")
+        status(f"  Added {added} new semantic records to vector store")
     else:
-        status(f"[3-5/{total_steps}] No new chunks — skipping embedding, merge, storage")
+        status(f"[3/{total_steps}] No new semantic records — skipping embedding")
+        status(f"[4/{total_steps}] Writing semantic manifest and prune dry-run...")
+        t0 = time.time()
+        if config.ENABLE_ATOM_PIPELINE:
+            prune_plan = build_prune_plan(manifest, collection.get(include=[]).get("ids", []))
+            manifest_path = write_manifest(manifest)
+            prune_plan_path = write_prune_plan(prune_plan)
+            status(
+                f"  Manifest: {manifest_path.name}; prune plan: {prune_plan_path.name} "
+                f"({time.time() - t0:.1f}s)"
+            )
+        else:
+            status(f"  Atom manifest skipped; v1 chunking remains active ({time.time() - t0:.1f}s)")
+        status(f"[5/{total_steps}] No new semantic records — skipping storage")
 
-    # Load all for clustering (includes previously stored)
-    items, all_embeddings = load_all_embeddings()
-    status(f"  Total in store: {len(items)} chunks")
+    # Load only records that actually produced embedding chunks.
+    active_record_ids = [compute_chunk_id(chunk) for chunk in chunks]
+    items, all_embeddings = load_all_embeddings(ids=active_record_ids)
+    status(f"  Active semantic corpus: {len(items)} records from manifest")
 
     # ─── Deduplicate exact-match texts ───
     seen_texts: dict[str, int] = {}  # normalized text → index in deduped list
@@ -187,13 +242,21 @@ def main(on_status: Callable[[str], None] | None = None):
     # ─── Step 7: Condense ───
     status(f"[7/{total_steps}] Condensing {len(result.clusters)} clusters → topic notes + condensed viz...")
     t0 = time.time()
-    condensed = condense(result, on_status=on_status)
+    condensed = condense(result, on_status=on_status, embeddings_hd=all_embeddings)
     n_topics = condensed["stats"]["total_clusters"]
     n_super = condensed["stats"]["total_super_clusters"]
     n_edges = condensed["stats"]["total_edges"]
     status(f"  Condensed in {time.time() - t0:.1f}s: {n_topics} topics, {n_super} mega-topics, {n_edges} edges")
 
     # ─── Step 8: Named entities ───
+    status("  Syncing manual ThoughtMap Intake curation...")
+    sync_kanban_curation(on_status=status)
+    if config.ENABLE_ATOM_PIPELINE:
+        write_segment_curation_board(atoms, decisions)
+        write_domain_curation_board(atoms)
+    else:
+        status("  Atom curation boards skipped; run scripts/prototype_thought_atoms.py for review surfaces")
+
     entities = []
     if config.NER_ENABLED:
         status(f"[8/{total_steps}] Extracting named entities...")
@@ -202,9 +265,18 @@ def main(on_status: Callable[[str], None] | None = None):
         status(f"  Found {len(entities)} entities in {time.time() - t0:.1f}s")
     else:
         status(f"[8/{total_steps}] NER disabled — skipping")
+    if config.ENABLE_ATOM_PIPELINE:
+        write_curation_report(atoms, decisions, load_entity_registry())
 
-    # ─── Step 9: Reports and artifacts ───
-    status(f"[9/{total_steps}] Generating report, indices, and visualizations...")
+    # ─── Step 9: Semantic layers ───
+    status(f"[9/{total_steps}] Generating glossary, taxonomy, topology, and ontology...")
+    t0 = time.time()
+    generate_semantic_artifacts(entities, condensed, on_status=status)
+    write_condensed_visualization(condensed, on_status=status)
+    status(f"  Semantic layers generated in {time.time() - t0:.1f}s")
+
+    # ─── Step 10: Reports and artifacts ───
+    status(f"[10/{total_steps}] Generating report, indices, visualizations, and kanban artifacts...")
 
     report_path = save_report(result, entities=entities)
     status(f"  Report: {report_path}")
@@ -215,6 +287,35 @@ def main(on_status: Callable[[str], None] | None = None):
     index_dir = generate_cluster_indices(result, np.array(all_embeddings))
     idx_count = len(list(index_dir.glob("*.md")))
     status(f"  Domain indices: {idx_count} files in {index_dir}")
+
+    kanban_paths = generate_kanban_artifacts(entities=entities, on_status=status)
+    status(f"  Kanban JSON: {kanban_paths['json']}")
+    status(f"  Kanban board: {kanban_paths['board']}")
+
+    # ─── Echoes: near-duplicate thought groups ───
+    try:
+        from thoughtmap.analysis.echoes import (
+            compute_echoes,
+            save_echoes,
+            ECHO_DEFAULT_THRESHOLD,
+            ECHO_MIN_GROUP_SIZE,
+        )
+        t0 = time.time()
+        echoes = compute_echoes(
+            items,
+            all_embeddings,
+            threshold=ECHO_DEFAULT_THRESHOLD,
+            min_group_size=ECHO_MIN_GROUP_SIZE,
+        )
+        save_echoes(echoes, ECHO_DEFAULT_THRESHOLD, ECHO_MIN_GROUP_SIZE)
+        big = sum(1 for g in echoes if g["size"] >= 5)
+        status(
+            f"  Echoes: {len(echoes)} groups (>= {ECHO_MIN_GROUP_SIZE} members) "
+            f"at cos >= {ECHO_DEFAULT_THRESHOLD}, "
+            f"{big} with >= 5 members ({time.time() - t0:.1f}s)"
+        )
+    except Exception as e:
+        status(f"  Echoes: skipped ({e})")
 
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

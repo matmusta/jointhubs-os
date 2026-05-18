@@ -278,6 +278,8 @@ loss = -log_prob * (reward - baseline)
 
 ## 7. Adapting for ThoughtMap
 
+Vec2Text should be treated as one part of the broader ThoughtMap model-optimization layer, not as the first model to train. The most immediate quality win is likely a fine-tuned Entity Type Resolver, because current NER mistakes are concrete and easy to evaluate. See [[model-optimization-finetuning-plan|Model Optimization and Fine-Tuning Plan]] for the recommended order.
+
 ### Use Case: Concept Arithmetic Narration
 
 Instead of inverting a single embedding, describe the *direction* between two embeddings:
