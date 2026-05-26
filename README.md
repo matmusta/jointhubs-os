@@ -1,4 +1,4 @@
-Dear note takers,
+Dear note taker,
 
 I'd like to present AI-first data model
 
